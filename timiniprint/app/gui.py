@@ -11,6 +11,8 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, ttk
 
+from PIL import Image, ImageFont, ImageOps, ImageTk
+
 from .diagnostics import emit_startup_warnings
 from .. import reporting
 from ..devices import PrinterCatalog
@@ -78,6 +80,7 @@ class TiMiniPrintGUI(tk.Tk):
         self.device_var = tk.StringVar()
         self.profile_var = tk.StringVar(value="")
         self.file_var = tk.StringVar()
+        self.text_input_var = tk.StringVar()
         self.text_mode_var = tk.BooleanVar(value=False)
         self.rotate_90_var = tk.BooleanVar(value=False)
         self.darkness_var = tk.IntVar(value=3)
@@ -98,7 +101,16 @@ class TiMiniPrintGUI(tk.Tk):
         self._paper_motion_busy = False
         self._layout_ready = False
         self._closing = False
+        self._animation_spinner_index = 0
+        self._animation_mode = "scan"
+        self._animation_job = None
+        self._bt_icon_idle = None
+        self._bt_icon_connected = None
+        self._bt_scan_frames = []
+        self._bt_connect_frames = []
+        self._bt_fallback_symbols = ["ᛒ", "ᛒ", "ᛒ", "ᛒ"]
         self.file_var.trace_add("write", self._on_file_path_change)
+        self.text_columns_var.trace_add("write", self._on_text_columns_change)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build_ui()
@@ -106,6 +118,7 @@ class TiMiniPrintGUI(tk.Tk):
         self.minsize(int(self.winfo_reqwidth()*.9), self.winfo_reqheight())
 
         self._layout_ready = True
+        self._on_text_columns_change()  # Set initial font size for text input
         self._set_connected_state(False)
         self.after(100, self._process_queue)
         self.after(200, self.scan)
@@ -118,31 +131,57 @@ class TiMiniPrintGUI(tk.Tk):
         device_frame.columnconfigure(1, weight=1)
 
         ttk.Label(device_frame, text="Device:").grid(row=0, column=0, sticky="w", **padding)
-        self.device_combo = ttk.Combobox(device_frame, textvariable=self.device_var, width=48, state="readonly")
+        self.device_combo = ttk.Combobox(device_frame, textvariable=self.device_var, width=38, state="readonly")
         self.device_combo.grid(row=0, column=1, sticky="ew", **padding)
 
+        self.bluetooth_icon_container = tk.Frame(
+            device_frame,
+            width=34,
+            height=30,
+            bg=self.cget("bg"),
+        )
+        self.bluetooth_icon_container.grid(row=0, column=2, rowspan=2, sticky="n", pady=(8, 0))
+        self.bluetooth_icon_container.grid_propagate(False)
+
+        self.bluetooth_status_icon = tk.Label(
+            self.bluetooth_icon_container,
+            bg=self.cget("bg"),
+        )
+        self.bluetooth_status_icon.pack(expand=True)
+        self._load_bluetooth_icon_states()
+
         self.refresh_button = ttk.Button(device_frame, text="Refresh", command=self.scan)
-        self.refresh_button.grid(row=0, column=2, **padding)
+        self.refresh_button.grid(row=0, column=3, **padding)
         ttk.Label(device_frame, text="Profile:").grid(row=1, column=0, sticky="w", **padding)
         self.profile_label = ttk.Label(device_frame, textvariable=self.profile_var, width=48)
         self.profile_label.grid(row=1, column=1, sticky="ew", **padding)
 
         self.connection_button = ttk.Button(device_frame, text="Connect", command=self.toggle_connection)
-        self.connection_button.grid(row=1, column=2, sticky="e", **padding)
+        self.connection_button.grid(row=1, column=3, sticky="e", **padding)
 
-        file_frame = ttk.LabelFrame(self, text="File")
-        file_frame.pack(fill="x", padx=10, pady=10)
+        file_frame = ttk.LabelFrame(self, text="Input")
+        file_frame.pack(fill="both", expand=False, padx=10, pady=10)
         file_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(file_frame, text="Path:").grid(row=0, column=0, sticky="w", **padding)
+        ttk.Label(file_frame, text="File path:").grid(row=0, column=0, sticky="w", **padding)
         self.file_entry = ttk.Entry(file_frame, textvariable=self.file_var, width=48)
         self.file_entry.grid(row=0, column=1, sticky="ew", **padding)
         self.browse_button = ttk.Button(file_frame, text="Browse", command=self.browse)
         self.browse_button.grid(row=0, column=2, **padding)
 
-        options_frame = ttk.LabelFrame(self, text="Options")
-        options_frame.pack(fill="x", padx=10, pady=10)
-        checks_frame = ttk.Frame(options_frame)
+        ttk.Label(file_frame, text="Or text:").grid(row=1, column=0, sticky="nw", **padding)
+        self.text_input_container = ttk.Frame(file_frame, width=420, height=110)
+        self.text_input_container.grid(row=1, column=1, sticky="ew", **padding)
+        self.text_input_container.grid_propagate(False)
+        self.text_input_container.pack_propagate(False)
+        self.text_input = tk.Text(self.text_input_container, height=4, width=1, wrap="word")
+        self.text_input.pack(fill="both", expand=True)
+        self.text_input.bind("<Control-a>", lambda e: (self.text_input.tag_add("sel", "1.0", "end"), "break"))
+        file_frame.rowconfigure(1, weight=0)
+
+        self.options_frame = ttk.LabelFrame(self, text="Options")
+        self.options_frame.pack(fill="x", padx=10, pady=10)
+        checks_frame = ttk.Frame(self.options_frame)
         checks_frame.grid(row=0, column=0, columnspan=3, sticky="w", **padding)
         self.text_mode_check = ttk.Checkbutton(
             checks_frame,
@@ -168,9 +207,9 @@ class TiMiniPrintGUI(tk.Tk):
             variable=self.trim_top_bottom_margins_var,
         )
         self.trim_top_bottom_margins_check.pack(side="left")
-        ttk.Label(options_frame, text="Darkness:").grid(row=1, column=0, sticky="w", **padding)
+        ttk.Label(self.options_frame, text="Darkness:").grid(row=1, column=0, sticky="w", **padding)
         self.darkness_scale = tk.Scale(
-            options_frame,
+            self.options_frame,
             from_=1,
             to=5,
             orient="horizontal",
@@ -179,9 +218,9 @@ class TiMiniPrintGUI(tk.Tk):
             variable=self.darkness_var,
         )
         self.darkness_scale.grid(row=1, column=1, sticky="ew", **padding)
-        self.darkness_value_label = ttk.Label(options_frame, textvariable=self.darkness_var, width=2)
+        self.darkness_value_label = ttk.Label(self.options_frame, textvariable=self.darkness_var, width=2)
         self.darkness_value_label.grid(row=1, column=2, sticky="w", **padding)
-        options_frame.columnconfigure(1, weight=1)
+        self.options_frame.columnconfigure(1, weight=1)
 
         self.text_frame = ttk.LabelFrame(self, text="Txt Options")
         self.text_frame.columnconfigure(1, weight=1)
@@ -192,25 +231,36 @@ class TiMiniPrintGUI(tk.Tk):
         self.text_font_browse.grid(row=0, column=2, **padding)
         self.text_font_clear = ttk.Button(self.text_frame, text="Default", command=self.clear_text_font)
         self.text_font_clear.grid(row=0, column=3, **padding)
-        ttk.Label(self.text_frame, text="Letters per line:").grid(row=1, column=0, sticky="w", **padding)
+        ttk.Label(self.text_frame, text="Schriftgröße:").grid(row=1, column=0, sticky="w", **padding)
+        size_controls = ttk.Frame(self.text_frame)
+        size_controls.grid(row=1, column=1, columnspan=3, sticky="ew", **padding)
+        size_controls.columnconfigure(1, weight=1)
+        left_indicator = ttk.Frame(size_controls)
+        left_indicator.grid(row=0, column=0, sticky="e", padx=(0, 4))
+        ttk.Label(left_indicator, text="kleiner", font=("TkDefaultFont", 8)).grid(row=0, column=0, sticky="e")
+        ttk.Label(left_indicator, text="50 cpl", font=("TkDefaultFont", 6)).grid(row=1, column=0, sticky="e")
         self.text_columns_scale = tk.Scale(
-            self.text_frame,
-            from_=30,
-            to=40,
+            size_controls,
+            from_=50,
+            to=15,
             orient="horizontal",
             resolution=1,
             showvalue=False,
             variable=self.text_columns_var,
         )
-        self.text_columns_scale.grid(row=1, column=1, sticky="ew", **padding)
+        self.text_columns_scale.grid(row=0, column=1, sticky="ew", padx=4)
+        right_indicator = ttk.Frame(size_controls)
+        right_indicator.grid(row=0, column=2, sticky="w", padx=(4, 0))
+        ttk.Label(right_indicator, text="Größer", font=("TkDefaultFont", 13, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(right_indicator, text="15 cpl", font=("TkDefaultFont", 6)).grid(row=1, column=0, sticky="w")
         self.text_columns_value_label = ttk.Label(self.text_frame, textvariable=self.text_columns_var, width=4)
-        self.text_columns_value_label.grid(row=1, column=2, sticky="w", **padding)
+        self.text_columns_value_label.grid(row=2, column=0, sticky="w", **padding)
         self.text_wrap_check = ttk.Checkbutton(
             self.text_frame,
             text="Whitespace wrap",
             variable=self.text_wrap_var,
         )
-        self.text_wrap_check.grid(row=1, column=3, sticky="w", **padding)
+        self.text_wrap_check.grid(row=2, column=1, sticky="w", **padding)
 
         self.pdf_frame = ttk.LabelFrame(self, text="PDF Options")
         self.pdf_frame.columnconfigure(1, weight=1)
@@ -305,6 +355,7 @@ class TiMiniPrintGUI(tk.Tk):
 
     def scan(self) -> None:
         self._queue_status(reporting.STATUS_SCAN_START)
+        self._start_animation("scan")
 
         def done(fut):
             try:
@@ -316,8 +367,10 @@ class TiMiniPrintGUI(tk.Tk):
                     else:
                         self._queue_warning(reporting.WARNING_SCAN_CLASSIC_FAILED, detail=str(failure.error))
                 self._queue_status(reporting.STATUS_SCAN_DONE, count=len(result.devices))
+                self._stop_animation()
             except Exception as exc:
                 self._queue_error(reporting.ERROR_SCAN_FAILED, detail=str(exc), exc=exc)
+                self._stop_animation()
 
         self.ble_loop.submit(self.discovery.scan_report(), callback=done)
 
@@ -379,23 +432,69 @@ class TiMiniPrintGUI(tk.Tk):
             self.file_var.set(path)
 
     def browse_text_font(self) -> None:
+        """Open the native OS font file picker and apply selected font to preview."""
         path = filedialog.askopenfilename(
+            parent=self,
             title="Select font",
+            initialdir=self._default_font_directory(),
             filetypes=[
-                ("Fonts", "*.ttf *.otf *.ttc"),
+                ("Font files", "*.ttf *.otf *.ttc"),
                 ("All files", "*.*"),
             ],
         )
         if path:
             self.text_font_var.set(path)
+            self._on_text_columns_change()
 
     def clear_text_font(self) -> None:
         self.text_font_var.set("")
+        self._on_text_columns_change()
+
+    @staticmethod
+    def _default_font_directory() -> str:
+        if os.name == "nt":
+            return os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts")
+        if os.path.isdir("/System/Library/Fonts"):
+            return "/System/Library/Fonts"
+        if os.path.isdir("/Library/Fonts"):
+            return "/Library/Fonts"
+        if os.path.isdir("/usr/share/fonts"):
+            return "/usr/share/fonts"
+        return os.path.expanduser("~")
+
+    def _preview_font_family(self) -> str:
+        configured_font = self.text_font_var.get().strip()
+        if not configured_font:
+            return "Courier"
+        if os.path.isfile(configured_font):
+            try:
+                family_name, _style = ImageFont.truetype(configured_font, 10).getname()
+                if family_name:
+                    return family_name
+            except Exception:
+                return "Courier"
+            return "Courier"
+        return configured_font
 
     def _on_file_path_change(self, *_args) -> None:
         path = self.file_var.get()
         self._set_text_mode_for_path(path)
         self._update_option_sections(path)
+
+    def _on_text_columns_change(self, *_args) -> None:
+        """Update text input preview font size based on columns slider."""
+        try:
+            columns = self.text_columns_var.get()
+            # Calculate font size: inverse relationship to columns (more columns = smaller font)
+            # Formula: base_size * (default_columns / current_columns)
+            # At 35 columns (default), use 10pt; scales proportionally
+            base_size = 10
+            default_columns = 35
+            font_size = max(6, int(base_size * default_columns / columns))
+            preview_family = self._preview_font_family()
+            self.text_input.configure(font=(preview_family, font_size))
+        except Exception:
+            pass  # Ignore errors during initialization
 
     def _set_text_mode_for_path(self, path: str) -> None:
         path = path.strip()
@@ -407,14 +506,18 @@ class TiMiniPrintGUI(tk.Tk):
 
     def _update_option_sections(self, path: str) -> None:
         ext = os.path.splitext(path.strip())[1].lower()
-        self._set_section_visible(self.text_frame, ext == ".txt")
+        # Text options are always visible (for both file input and direct text)
+        self._set_section_visible(self.text_frame, True)
         self._set_section_visible(self.pdf_frame, ext == ".pdf")
         self._refresh_min_height()
 
     def _set_section_visible(self, frame: ttk.LabelFrame, visible: bool) -> None:
         if visible:
             if not frame.winfo_manager():
-                frame.pack(before=self.action_frame, fill="x", padx=10, pady=10)
+                if frame is self.text_frame:
+                    frame.pack(before=self.options_frame, fill="x", padx=10, pady=10)
+                else:
+                    frame.pack(before=self.action_frame, fill="x", padx=10, pady=10)
             return
         if frame.winfo_manager():
             frame.pack_forget()
@@ -429,6 +532,7 @@ class TiMiniPrintGUI(tk.Tk):
             self.minsize(min_width, req_height)
 
     def print_file(self) -> None:
+        import tempfile
         from ..printing import PrintJobBuilder, PrintSettings
 
         label = self.device_var.get()
@@ -436,14 +540,34 @@ class TiMiniPrintGUI(tk.Tk):
         if not device:
             self._queue_error(reporting.ERROR_NO_DEVICE)
             return
+        
         path = self.file_var.get().strip()
-        if not path:
+        text_input = self.text_input.get("1.0", "end").strip()
+        
+        if not path and not text_input:
             self._queue_error(reporting.ERROR_NO_FILE)
             return
+        if path and text_input:
+            self._queue_error("error_both_input", detail="Provide either a file path or text, not both.")
+            return
+        
         connected_device = self.connected_device
         if not connected_device or self.connection is None:
             self._queue_error(reporting.ERROR_PROFILE_NOT_DETECTED)
             return
+        
+        # Handle text input by creating a temporary file
+        temp_path = None
+        try:
+            if text_input:
+                with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as handle:
+                    handle.write(text_input)
+                    temp_path = handle.name
+                path = temp_path
+        except Exception as exc:
+            self._queue_error(reporting.ERROR_PRINT_FAILED, detail=str(exc), exc=exc)
+            return
+        
         ext = os.path.splitext(path)[1].lower()
         pdf_pages = None
         pdf_page_gap_mm = 0
@@ -470,6 +594,13 @@ class TiMiniPrintGUI(tk.Tk):
                 self._queue_status(reporting.STATUS_PRINT_SENT)
             except Exception as exc:
                 self._queue_error(reporting.ERROR_PRINT_FAILED, detail=str(exc), exc=exc)
+            finally:
+                # Clean up temporary file if it was created
+                if temp_path and os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except:
+                        pass
 
         async def run() -> None:
             self._queue_status(reporting.STATUS_PRINTING)
@@ -554,10 +685,13 @@ class TiMiniPrintGUI(tk.Tk):
 
     def _set_connected_state(self, connected: bool, device=None) -> None:
         self._connecting = False
+        self._stop_animation()
+        self._set_bluetooth_icon_idle()
         self.connected_device = None
         if connected and device:
             self.connected_device = device
             self.profile_var.set(device.profile_key.upper())
+            self._set_bluetooth_icon_connected()
             self._set_device_combo_state(False)
             self._set_widget_state(self.refresh_button, False)
             self._set_widget_state(self.file_entry, True)
@@ -615,7 +749,8 @@ class TiMiniPrintGUI(tk.Tk):
         default_columns = TextConverter.default_columns_for_width(width)
         min_columns = max(5, int(round(default_columns * 0.5)))
         max_columns = max(min_columns + 1, int(round(default_columns * 1.5)))
-        self.text_columns_scale.configure(from_=min_columns, to=max_columns)
+        # Keep slider semantics stable: left = more cpl (smaller text), right = fewer cpl (larger text)
+        self.text_columns_scale.configure(from_=max_columns, to=min_columns)
         self.text_columns_var.set(default_columns)
 
     @staticmethod
@@ -630,9 +765,13 @@ class TiMiniPrintGUI(tk.Tk):
             self._set_device_combo_state(False)
             self._set_widget_state(self.refresh_button, False)
             self._set_connection_button("Connecting...", False)
+            self._start_animation("connect")
             return
+        self._stop_animation()
         if self.connected_device:
+            self._set_bluetooth_icon_connected()
             return
+        self._set_bluetooth_icon_idle()
         self._set_device_combo_state(True)
         self._set_widget_state(self.refresh_button, True)
         self._set_connection_button("Connect", True)
@@ -655,6 +794,80 @@ class TiMiniPrintGUI(tk.Tk):
     def _set_device_combo_state(self, enabled: bool) -> None:
         state = "readonly" if enabled else "disabled"
         self.device_combo.configure(state=state)
+
+    def _start_animation(self, mode: str = "scan") -> None:
+        """Animate the bluetooth status icon while scanning/connecting."""
+        self._stop_animation()
+        self._animation_mode = mode
+        self._animation_spinner_index = 0
+        self._animate()
+
+    def _animate(self) -> None:
+        """Animate bluetooth status by switching fixed-size image frames."""
+        frames = self._bt_connect_frames if self._animation_mode == "connect" else self._bt_scan_frames
+        if frames:
+            idx = self._animation_spinner_index % len(frames)
+            self.bluetooth_status_icon.configure(image=frames[idx], text="")
+            self._animation_spinner_index = (self._animation_spinner_index + 1) % len(frames)
+        else:
+            # Fallback animation when image frames are unavailable.
+            colors = ["#8a8a8a", "#6b7280", "#4b5563", "#6b7280"]
+            if self._animation_mode == "connect":
+                colors = ["#60a5fa", "#3b82f6", "#2563eb", "#1d4ed8"]
+            idx = self._animation_spinner_index % len(colors)
+            self.bluetooth_status_icon.configure(image="", text=self._bt_fallback_symbols[idx], fg=colors[idx])
+            self._animation_spinner_index = (self._animation_spinner_index + 1) % len(colors)
+        self._animation_job = self.after(220, self._animate)
+
+    def _stop_animation(self) -> None:
+        """Stop icon animation; caller applies final icon state."""
+        if self._animation_job is not None:
+            self.after_cancel(self._animation_job)
+            self._animation_job = None
+
+    def _set_bluetooth_icon_idle(self) -> None:
+        self._stop_animation()
+        if self._bt_icon_idle is not None:
+            self.bluetooth_status_icon.configure(image=self._bt_icon_idle, text="")
+            return
+        self.bluetooth_status_icon.configure(image="", text="ᛒ", fg="#8a8a8a")
+
+    def _set_bluetooth_icon_connected(self) -> None:
+        self._stop_animation()
+        if self._bt_icon_connected is not None:
+            self.bluetooth_status_icon.configure(image=self._bt_icon_connected, text="")
+            return
+        self.bluetooth_status_icon.configure(image="", text="ᛒ", fg="#2563eb")
+
+    def _load_bluetooth_icon_states(self) -> None:
+        """Load bluetooth icon image and create fixed-size states for idle/scan/connect/connected."""
+        icon_path = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "data", "icons", "bluetooth.png")
+        )
+        if not os.path.isfile(icon_path):
+            return
+        try:
+            resampling = getattr(Image, "Resampling", Image)
+            base = Image.open(icon_path).convert("RGBA").resize((22, 22), resampling.LANCZOS)
+        except Exception:
+            return
+
+        self._bt_icon_idle = ImageTk.PhotoImage(self._tinted_bluetooth_icon(base, "#7a7a7a"))
+        self._bt_icon_connected = ImageTk.PhotoImage(self._tinted_bluetooth_icon(base, "#2563eb"))
+
+        scan_colors = ["#8a8a8a", "#6b7280", "#4b5563", "#6b7280"]
+        connect_colors = ["#60a5fa", "#3b82f6", "#2563eb", "#1d4ed8"]
+        self._bt_scan_frames = [ImageTk.PhotoImage(self._tinted_bluetooth_icon(base, color)) for color in scan_colors]
+        self._bt_connect_frames = [ImageTk.PhotoImage(self._tinted_bluetooth_icon(base, color)) for color in connect_colors]
+
+        self.bluetooth_status_icon.configure(image=self._bt_icon_idle, text="")
+
+    @staticmethod
+    def _tinted_bluetooth_icon(base: Image.Image, color: str) -> Image.Image:
+        gray = ImageOps.grayscale(base)
+        tinted = ImageOps.colorize(gray, black="#000000", white=color).convert("RGBA")
+        tinted.putalpha(base.split()[-1])
+        return tinted
 
     def _on_close(self) -> None:
         if self._closing:

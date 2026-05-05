@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ..protocol.family import ProtocolFamily
-from ..protocol.types import ImageEncoding, ImagePipelineConfig
+from ..protocol.protocol_types import ImageEncoding, ImagePipelineConfig
 from ..raster import PixelFormat
 
 

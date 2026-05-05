@@ -11,7 +11,7 @@ from .commands import (
 )
 from .families import get_protocol_behavior
 from .family import ProtocolFamily
-from .types import ImageEncoding, ImagePipelineConfig
+from .protocol_types import ImageEncoding, ImagePipelineConfig
 
 if TYPE_CHECKING:
     from ..devices.device import PrinterDevice

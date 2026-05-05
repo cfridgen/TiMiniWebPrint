@@ -12,7 +12,7 @@ from .commands import (
 from .encoding import build_line_packets
 from .families import PrintJobRequest, get_protocol_behavior
 from .family import ProtocolFamily
-from .types import ImagePipelineConfig
+from .protocol_types import ImagePipelineConfig
 
 
 def _build_family_job(request: PrintJobRequest) -> bytes | None:

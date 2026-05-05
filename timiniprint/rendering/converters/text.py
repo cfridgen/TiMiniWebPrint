@@ -17,10 +17,12 @@ class TextConverter(PageConverter):
         font_path: Optional[str] = None,
         columns: Optional[int] = None,
         wrap_lines: bool = True,
+        preserve_long_lines: bool = False,
     ) -> None:
         self._font_path = font_path
         self._columns_override = columns
         self._word_wrap = wrap_lines
+        self._preserve_long_lines = preserve_long_lines
 
     def load(self, path: str, width: int) -> List[Page]:
         with open(path, "r", encoding="utf-8", errors="replace") as handle:
@@ -35,9 +37,12 @@ class TextConverter(PageConverter):
         reference_text = self._reference_text(columns)
         font = self._fit_truetype_font(font_path, width, reference_text)
         lines = self._wrap_text_lines(text, width, font)
+        render_width = width
+        if self._preserve_long_lines and lines:
+            render_width = max(width, max(self._text_width(font, line) for line in lines))
         line_height = self._font_line_height(font)
         height = max(1, line_height * len(lines))
-        img = Image.new("1", (width, height), 1)
+        img = Image.new("1", (render_width, height), 1)
         draw = ImageDraw.Draw(img)
         y = 0
         for line in lines:
@@ -83,6 +88,11 @@ class TextConverter(PageConverter):
     def _wrap_text_lines(self, text: str, width: int, font: ImageFont.FreeTypeFont) -> List[str]:
         if text == "":
             return [""]
+        if self._preserve_long_lines:
+            lines = text.splitlines()
+            if text.endswith("\n"):
+                lines.append("")
+            return lines or [""]
         lines: List[str] = []
         raw_lines = text.splitlines()
         if text.endswith("\n"):

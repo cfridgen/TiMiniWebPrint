@@ -13,7 +13,7 @@ from tests.helpers import install_crc8_stub, reset_registry_cache
 from timiniprint.devices import PrinterCatalog
 from timiniprint.protocol.family import ProtocolFamily
 from timiniprint.protocol.families import get_protocol_definition
-from timiniprint.protocol.types import ImageEncoding
+from timiniprint.protocol.protocol_types import ImageEncoding
 from timiniprint.raster import PixelFormat, RasterBuffer, RasterSet
 from timiniprint.rendering.converters.base import Page
 

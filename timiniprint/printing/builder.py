@@ -26,6 +26,7 @@ class PrintJobBuilder:
             text_font=self.settings.text_font,
             text_columns=self.settings.text_columns,
             text_wrap=self.settings.text_wrap,
+            text_preserve_long_lines=self.settings.rotate_90_clockwise,
             trim_side_margins=self.settings.trim_side_margins,
             trim_top_bottom_margins=self.settings.trim_top_bottom_margins,
             pdf_pages=self.settings.pdf_pages,

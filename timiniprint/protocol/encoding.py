@@ -4,7 +4,7 @@ from typing import List
 
 from .packet import make_packet
 from .family import ProtocolFamily
-from .types import ImageEncoding
+from .protocol_types import ImageEncoding
 
 
 def encode_run(color: int, count: int) -> List[int]:

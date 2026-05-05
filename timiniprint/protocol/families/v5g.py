@@ -5,7 +5,7 @@ from ..encoding import pack_line
 from ..family import ProtocolFamily
 from ..packet import make_packet
 from ...raster import PixelFormat
-from ..types import ImageEncoding, ImagePipelineConfig
+from ..protocol_types import ImageEncoding, ImagePipelineConfig
 from .base import BleTransportProfile, PrintJobRequest, ProtocolBehavior
 
 # Firmware blackening 1-5 maps to the protocol A4 quality bytes, not to

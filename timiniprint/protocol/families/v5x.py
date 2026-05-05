@@ -4,7 +4,7 @@ from ..encoding import pack_line
 from ..packet import crc8_value, make_packet
 from ..family import ProtocolFamily
 from ...raster import PixelFormat
-from ..types import ImageEncoding, ImagePipelineConfig
+from ..protocol_types import ImageEncoding, ImagePipelineConfig
 from .base import BleTransportProfile, FlowControlProfile, PrintJobRequest, ProtocolBehavior
 
 def _hex_bytes(value: str) -> bytes:

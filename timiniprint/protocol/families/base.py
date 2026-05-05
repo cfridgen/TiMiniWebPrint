@@ -6,7 +6,7 @@ from typing import Callable, Mapping
 from ...raster import PixelFormat, RasterSet
 from ..family import ProtocolFamily
 from ..packet import prefixed_packet_length
-from ..types import ImageEncoding, ImagePipelineConfig
+from ..protocol_types import ImageEncoding, ImagePipelineConfig
 
 ManualMotionBuilder = Callable[[int, ProtocolFamily], bytes]
 FamilyJobBuilder = Callable[["PrintJobRequest"], bytes]

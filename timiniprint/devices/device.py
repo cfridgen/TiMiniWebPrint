@@ -5,7 +5,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
 from ..protocol.family import ProtocolFamily
-from ..protocol.types import ImagePipelineConfig
+from ..protocol.protocol_types import ImagePipelineConfig
 
 if TYPE_CHECKING:
     from .profiles import PrinterProfile

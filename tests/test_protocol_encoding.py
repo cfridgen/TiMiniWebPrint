@@ -11,7 +11,7 @@ class ProtocolEncodingTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         install_crc8_stub()
         cls.encoding = importlib.import_module("timiniprint.protocol.encoding")
-        cls.types = importlib.import_module("timiniprint.protocol.types")
+        cls.types = importlib.import_module("timiniprint.protocol.protocol_types")
 
     def test_encode_run_splits_over_127(self) -> None:
         out = self.encoding.encode_run(1, 130)

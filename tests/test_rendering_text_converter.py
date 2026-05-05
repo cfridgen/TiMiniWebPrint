@@ -52,6 +52,18 @@ class RenderingTextConverterTests(unittest.TestCase):
         self.assertTrue(pages[0].is_text)
         self.assertFalse(pages[0].dither)
 
+    def test_preserve_long_lines_disables_auto_wrap_and_expands_canvas(self) -> None:
+        conv = TextConverter(font_path=None, preserve_long_lines=True)
+        text = "this is a long line that would normally wrap"
+        font = ImageFont.load_default()
+
+        with patch.object(TextConverter, "_fit_truetype_font", return_value=font):
+            lines = conv._wrap_text_lines(text, 25, font)
+            img = conv._render_text_image(text, 25)
+
+        self.assertEqual(lines, [text])
+        self.assertGreater(img.width, 25)
+
 
 if __name__ == "__main__":
     unittest.main()

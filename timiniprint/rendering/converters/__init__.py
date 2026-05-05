@@ -18,6 +18,7 @@ class PageLoader:
         text_font: Optional[str] = None,
         text_columns: Optional[int] = None,
         text_wrap: bool = True,
+        text_preserve_long_lines: bool = False,
         trim_side_margins: bool = True,
         trim_top_bottom_margins: bool = True,
         pdf_pages: Optional[str] = None,
@@ -41,6 +42,7 @@ class PageLoader:
                 font_path=text_font,
                 columns=text_columns,
                 wrap_lines=text_wrap,
+                preserve_long_lines=text_preserve_long_lines,
             )
         self._converters = converters
 

@@ -4,7 +4,7 @@ from ..compression import compress_lzo1x_1
 from ..encoding import pack_line
 from ..packet import make_packet
 from ...raster import PixelFormat
-from ..types import ImageEncoding, ImagePipelineConfig
+from ..protocol_types import ImageEncoding, ImagePipelineConfig
 from .base import BleTransportProfile, FlowControlProfile, PrintJobRequest, ProtocolBehavior
 
 

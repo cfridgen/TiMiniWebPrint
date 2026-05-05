@@ -14,14 +14,32 @@ from ..raster import PixelFormat, RasterBuffer, RasterSet
 def apply_page_transforms(pages: Sequence[Page], rotate_90_clockwise: bool = False) -> List[Page]:
     if not rotate_90_clockwise:
         return list(pages)
-    return [
-        Page(
-            image=page.image.transpose(Image.Transpose.ROTATE_270),
-            dither=page.dither,
-            is_text=page.is_text,
+    
+    transformed_pages = []
+    for page in pages:
+        img = page.image
+        # If rotating 90°, the current height becomes the new width
+        # The protocol requires width to be divisible by 8
+        # So we pad the height to be divisible by 8 before rotating
+        new_width_target = img.height
+        if new_width_target % 8 != 0:
+            # Pad height to make it divisible by 8
+            padded_height = ((new_width_target + 7) // 8) * 8
+            padding_needed = padded_height - img.height
+            padding_bottom = padding_needed
+            # Pad the image at the bottom with white (1 in binary format)
+            padded_img = Image.new("1", (img.width, padded_height), 1)
+            padded_img.paste(img, (0, 0))
+            img = padded_img
+        
+        transformed_pages.append(
+            Page(
+                image=img.transpose(Image.Transpose.ROTATE_270),
+                dither=page.dither,
+                is_text=page.is_text,
+            )
         )
-        for page in pages
-    ]
+    return transformed_pages
 
 
 def image_to_bw_pixels(img: Image.Image, dither: bool) -> List[int]:

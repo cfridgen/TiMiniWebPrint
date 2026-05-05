@@ -12,7 +12,7 @@ class ProtocolGoldenTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         install_crc8_stub()
         cls.builders = importlib.import_module("timiniprint.protocol._builders")
-        cls.types = importlib.import_module("timiniprint.protocol.types")
+        cls.types = importlib.import_module("timiniprint.protocol.protocol_types")
         cls.raster = importlib.import_module("timiniprint.raster")
         cls.golden = load_golden_hex("tests/fixtures/protocol_golden.json")
 

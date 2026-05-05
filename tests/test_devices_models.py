@@ -6,7 +6,7 @@ from tests.helpers import reset_registry_cache
 from timiniprint.devices import PrinterCatalog
 from timiniprint.devices.profiles import DetectionRule
 from timiniprint.protocol.family import ProtocolFamily
-from timiniprint.protocol.types import ImageEncoding
+from timiniprint.protocol.protocol_types import ImageEncoding
 from timiniprint.raster import PixelFormat
 
 
