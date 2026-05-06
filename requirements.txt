@@ -6,3 +6,5 @@ pyserial>=3.5
 python-lzo>=1.15
 pyobjc-framework-IOBluetooth>=10.0; sys_platform == "darwin"
 winsdk>=1.0.0b10; sys_platform == "win32"
+fastapi>=0.115
+uvicorn[standard]>=0.30

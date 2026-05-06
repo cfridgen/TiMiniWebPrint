@@ -9,6 +9,7 @@ import os
 import queue
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import filedialog, ttk
 
 from PIL import Image, ImageFont, ImageOps, ImageTk
@@ -18,10 +19,13 @@ from .. import reporting
 from ..devices import PrinterCatalog
 from ..protocol import PrinterProtocol
 from ..rendering.converters.text import TextConverter
+from ..rendering.fonts import find_monospace_bold_font
 from ..transport.bluetooth import BleakBluetoothConnector, BluetoothDiscovery
 from ..transport.bluetooth.types import DeviceTransport
 
 PAPER_MOTION_INTERVAL_MS = 1000
+PREVIEW_WRAP_COLUMNS = 15
+PREVIEW_FONT_SCALE = 1.2
 
 
 class BleLoop:
@@ -85,7 +89,7 @@ class TiMiniPrintGUI(tk.Tk):
         self.rotate_90_var = tk.BooleanVar(value=False)
         self.darkness_var = tk.IntVar(value=3)
         self.text_font_var = tk.StringVar()
-        self.text_columns_var = tk.IntVar(value=35)
+        self.text_columns_var = tk.IntVar(value=15)
         self.text_wrap_var = tk.BooleanVar(value=True)
         self.trim_margins_var = tk.BooleanVar(value=True)
         self.trim_top_bottom_margins_var = tk.BooleanVar(value=True)
@@ -109,6 +113,7 @@ class TiMiniPrintGUI(tk.Tk):
         self._bt_scan_frames = []
         self._bt_connect_frames = []
         self._bt_fallback_symbols = ["ᛒ", "ᛒ", "ᛒ", "ᛒ"]
+        self._preview_area_width_px = None
         self.file_var.trace_add("write", self._on_file_path_change)
         self.text_columns_var.trace_add("write", self._on_text_columns_change)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -171,11 +176,12 @@ class TiMiniPrintGUI(tk.Tk):
 
         ttk.Label(file_frame, text="Or text:").grid(row=1, column=0, sticky="nw", **padding)
         self.text_input_container = ttk.Frame(file_frame, width=420, height=110)
-        self.text_input_container.grid(row=1, column=1, sticky="ew", **padding)
+        self.text_input_container.grid(row=1, column=1, sticky="w", **padding)
         self.text_input_container.grid_propagate(False)
         self.text_input_container.pack_propagate(False)
         self.text_input = tk.Text(self.text_input_container, height=4, width=1, wrap="word")
         self.text_input.pack(fill="both", expand=True)
+        self.text_input.insert("1.0", "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
         self.text_input.bind("<Control-a>", lambda e: (self.text_input.tag_add("sel", "1.0", "end"), "break"))
         file_frame.rowconfigure(1, weight=0)
 
@@ -462,19 +468,26 @@ class TiMiniPrintGUI(tk.Tk):
             return "/usr/share/fonts"
         return os.path.expanduser("~")
 
-    def _preview_font_family(self) -> str:
+    def _preview_font_spec(self, font_size: int):
         configured_font = self.text_font_var.get().strip()
-        if not configured_font:
-            return "Courier"
-        if os.path.isfile(configured_font):
+        font_source = configured_font or find_monospace_bold_font()
+        family_name = "TkFixedFont"
+        style_tokens = []
+
+        if font_source and os.path.isfile(font_source):
             try:
-                family_name, _style = ImageFont.truetype(configured_font, 10).getname()
-                if family_name:
-                    return family_name
+                family_name, style_name = ImageFont.truetype(font_source, 10).getname()
+                style_name = (style_name or "").lower()
+                if "bold" in style_name:
+                    style_tokens.append("bold")
+                if "italic" in style_name or "oblique" in style_name:
+                    style_tokens.append("italic")
             except Exception:
-                return "Courier"
-            return "Courier"
-        return configured_font
+                pass
+        elif configured_font:
+            family_name = configured_font
+
+        return (family_name, font_size, *style_tokens)
 
     def _on_file_path_change(self, *_args) -> None:
         path = self.file_var.get()
@@ -490,9 +503,16 @@ class TiMiniPrintGUI(tk.Tk):
             # At 35 columns (default), use 10pt; scales proportionally
             base_size = 10
             default_columns = 35
-            font_size = max(6, int(base_size * default_columns / columns))
-            preview_family = self._preview_font_family()
-            self.text_input.configure(font=(preview_family, font_size))
+            font_size = max(6, int(round(base_size * default_columns * PREVIEW_FONT_SCALE / columns)))
+            preview_font = self._preview_font_spec(font_size)
+            self.text_input.configure(font=preview_font)
+
+            measured_font = tkfont.Font(font=self.text_input.cget("font"))
+            if self._preview_area_width_px is None:
+                # Calibrate once from the default 15 cpl view; printer width is fixed afterwards.
+                content_width = measured_font.measure("ABCDEFGHIJKLMNO")
+                self._preview_area_width_px = max(220, min(760, content_width + 24))
+            self.text_input_container.configure(width=self._preview_area_width_px)
         except Exception:
             pass  # Ignore errors during initialization
 
@@ -747,11 +767,13 @@ class TiMiniPrintGUI(tk.Tk):
     def _configure_text_columns(self, profile) -> None:
         width = self._normalized_width(profile.width)
         default_columns = TextConverter.default_columns_for_width(width)
-        min_columns = max(5, int(round(default_columns * 0.5)))
+        min_columns = min(15, max(5, int(round(default_columns * 0.5))))
         max_columns = max(min_columns + 1, int(round(default_columns * 1.5)))
         # Keep slider semantics stable: left = more cpl (smaller text), right = fewer cpl (larger text)
         self.text_columns_scale.configure(from_=max_columns, to=min_columns)
-        self.text_columns_var.set(default_columns)
+        current_columns = self.text_columns_var.get()
+        preferred_columns = max(min_columns, min(current_columns, max_columns))
+        self.text_columns_var.set(preferred_columns)
 
     @staticmethod
     def _normalized_width(width: int) -> int:
