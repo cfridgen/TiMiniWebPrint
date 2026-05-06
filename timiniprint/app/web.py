@@ -10,19 +10,96 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .. import reporting
 from ..devices import PrinterCatalog
 from ..rendering.converters.text import TextConverter
-from ..transport.bluetooth import BluetoothDiscovery
+from ..transport.bluetooth import BleakBluetoothConnector, BluetoothDiscovery
 from . import cli as cli_app
 
 app = FastAPI(title="TiMini Web Print", version="0.1.0")
-app.mount("/static", StaticFiles(directory=Path(__file__).with_name("web_static")), name="static")
+WEB_STATIC_DIR = Path(__file__).with_name("web_static")
+FONT_DIR = WEB_STATIC_DIR / "fonts"
+FONT_CATALOG: dict[str, dict[str, str]] = {
+    "inter_variable": {
+        "label": "Inter",
+        "family": "sans",
+        "width": "variable",
+        "filename": "Inter-Variable.ttf",
+        "css_family": "WebFontInter",
+    },
+    "noto_sans_variable": {
+        "label": "Noto Sans",
+        "family": "sans",
+        "width": "variable",
+        "filename": "NotoSans-Variable.ttf",
+        "css_family": "WebFontNotoSans",
+    },
+    "noto_serif_variable": {
+        "label": "Noto Serif",
+        "family": "serif",
+        "width": "variable",
+        "filename": "NotoSerif-Variable.ttf",
+        "css_family": "WebFontNotoSerif",
+    },
+    "source_serif4_variable": {
+        "label": "Source Serif 4",
+        "family": "serif",
+        "width": "variable",
+        "filename": "SourceSerif4-Variable.ttf",
+        "css_family": "WebFontSourceSerif4",
+    },
+    "roboto_mono_variable": {
+        "label": "Roboto Mono",
+        "family": "sans",
+        "width": "fixed",
+        "filename": "RobotoMono-Variable.ttf",
+        "css_family": "WebFontRobotoMono",
+    },
+    "ibm_plex_mono": {
+        "label": "IBM Plex Mono",
+        "family": "sans",
+        "width": "fixed",
+        "filename": "IBMPlexMono-Regular.ttf",
+        "css_family": "WebFontIBMPlexMono",
+    },
+    "courier_prime": {
+        "label": "Courier Prime",
+        "family": "serif",
+        "width": "fixed",
+        "filename": "CourierPrime-Regular.ttf",
+        "css_family": "WebFontCourierPrime",
+    },
+    "cutive_mono": {
+        "label": "Cutive Mono",
+        "family": "serif",
+        "width": "fixed",
+        "filename": "CutiveMono-Regular.ttf",
+        "css_family": "WebFontCutiveMono",
+    },
+    "material_symbols_outlined": {
+        "label": "Material Symbols Outlined",
+        "family": "sans",
+        "width": "variable",
+        "filename": "MaterialSymbolsOutlined-Variable.ttf",
+        "css_family": "WebFontMaterialSymbolsOutlined",
+    },
+    "noto_sans_symbols2": {
+        "label": "Noto Sans Symbols 2",
+        "family": "sans",
+        "width": "variable",
+        "filename": "NotoSansSymbols2-Regular.ttf",
+        "css_family": "WebFontNotoSansSymbols2",
+    },
+}
+DEFAULT_FONT_KEY = "ibm_plex_mono"
+
+app.mount("/static", StaticFiles(directory=WEB_STATIC_DIR), name="static")
 logger = logging.getLogger("timiniprint.web")
+_active_printer: dict[str, str] | None = None
 
 
 @app.middleware("http")
@@ -51,6 +128,7 @@ class PreviewRequest(BaseModel):
     text_columns: int = Field(default=15, ge=1, le=120)
     text_hard_wrap: bool = False
     text_font: str | None = None
+    text_font_key: str | None = None
 
 
 class PrintRequest(BaseModel):
@@ -61,7 +139,12 @@ class PrintRequest(BaseModel):
     text_columns: int = Field(default=15, ge=1, le=120)
     text_hard_wrap: bool = False
     text_font: str | None = None
+    text_font_key: str | None = None
     darkness: int = Field(default=3, ge=1, le=5)
+
+
+class ConnectRequest(BaseModel):
+    target: str = Field(min_length=1)
 
 
 def _normalize_width(width: int) -> int:
@@ -83,73 +166,296 @@ def _resolve_profile_width(profile_key: str | None) -> int:
     return _normalize_width(profiles[0].width)
 
 
+def _resolve_font_path(text_font_key: str | None, text_font_path: str | None) -> str | None:
+    if text_font_key:
+        meta = FONT_CATALOG.get(text_font_key)
+        if not meta:
+            raise HTTPException(status_code=400, detail=f"Unknown text font key '{text_font_key}'")
+        path = FONT_DIR / meta["filename"]
+        if not path.exists():
+            raise HTTPException(status_code=500, detail=f"Bundled font missing: {meta['filename']}")
+        return str(path)
+    return text_font_path
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     return """<!doctype html>
 <html>
 <head>
-  <meta charset=\"utf-8\" />
-  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
-  <title>TiMini Web Print</title>
-  <style>
-    body { font-family: sans-serif; margin: 20px; max-width: 980px; }
-    h1 { margin-bottom: 8px; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
-    .card { border: 1px solid #ccc; border-radius: 8px; padding: 12px; }
-    label { display: block; font-size: 13px; margin-bottom: 4px; }
-    textarea, input, select, button { width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 8px; }
-    textarea { min-height: 130px; resize: vertical; }
-    .actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-    #preview { display: none; max-width: 100%; border: 1px solid #ddd; background: #fff; }
-    #preview.is-visible { display: block; }
-    #status { white-space: pre-wrap; font-family: monospace; background: #f7f7f7; padding: 10px; border-radius: 8px; }
-  </style>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
+    <title>TiMini Web Print</title>
+    <link rel=\"icon\" type=\"image/svg+xml\" href=\"/static/favicon.svg\" />
+    <style>
+        @font-face { font-family: \"WebFontInter\"; src: url(\"/static/fonts/Inter-Variable.ttf\") format(\"truetype\"); }
+        @font-face { font-family: \"WebFontNotoSans\"; src: url(\"/static/fonts/NotoSans-Variable.ttf\") format(\"truetype\"); }
+        @font-face { font-family: \"WebFontNotoSerif\"; src: url(\"/static/fonts/NotoSerif-Variable.ttf\") format(\"truetype\"); }
+        @font-face { font-family: \"WebFontSourceSerif4\"; src: url(\"/static/fonts/SourceSerif4-Variable.ttf\") format(\"truetype\"); }
+        @font-face { font-family: \"WebFontRobotoMono\"; src: url(\"/static/fonts/RobotoMono-Variable.ttf\") format(\"truetype\"); }
+        @font-face { font-family: \"WebFontIBMPlexMono\"; src: url(\"/static/fonts/IBMPlexMono-Regular.ttf\") format(\"truetype\"); }
+        @font-face { font-family: \"WebFontCourierPrime\"; src: url(\"/static/fonts/CourierPrime-Regular.ttf\") format(\"truetype\"); }
+        @font-face { font-family: \"WebFontCutiveMono\"; src: url(\"/static/fonts/CutiveMono-Regular.ttf\") format(\"truetype\"); }
+        @font-face { font-family: \"WebFontMaterialSymbolsOutlined\"; src: url(\"/static/fonts/MaterialSymbolsOutlined-Variable.ttf\") format(\"truetype\"); }
+        @font-face { font-family: \"WebFontNotoSansSymbols2\"; src: url(\"/static/fonts/NotoSansSymbols2-Regular.ttf\") format(\"truetype\"); }
+
+        :root {
+            --bg-top: #f3f7ff;
+            --bg-bottom: #dfeeff;
+            --surface: rgba(255,255,255,0.9);
+            --surface-strong: #ffffff;
+            --surface-muted: #eef4fb;
+            --line: #d7e2ee;
+            --line-strong: #b9cadf;
+            --text: #18324b;
+            --muted: #5f7286;
+            --primary: #1473e6;
+            --primary-strong: #0f5cc0;
+            --accent: #00a86b;
+            --accent-strong: #008f5b;
+            --shadow: 0 20px 48px rgba(31, 68, 112, 0.14);
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: "WebFontInter", "Segoe UI", sans-serif;
+            margin: 0;
+            min-height: 100vh;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(255,255,255,0.85), transparent 28%),
+                linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+        }
+        h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -0.03em; }
+        p { margin: 0; color: var(--muted); }
+        .row { max-width: 1100px; margin: 0 auto; padding: 28px 20px 36px; }
+        .card {
+            border: 1px solid rgba(255,255,255,0.7);
+            border-radius: 28px;
+            padding: 24px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(247,251,255,0.92));
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(12px);
+        }
+        .hero {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: rgba(20, 115, 230, 0.1);
+            color: var(--primary-strong);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .section { margin-top: 18px; }
+        .section:first-child { margin-top: 0; }
+        .section-card {
+            padding: 16px 18px 18px;
+            border-radius: 20px;
+            background: var(--surface);
+            border: 1px solid var(--line);
+        }
+        label { display: block; font-size: 12px; margin-bottom: 6px; font-weight: 700; letter-spacing: 0.02em; color: var(--muted); text-transform: uppercase; }
+        textarea, input, select, button { width: 100%; margin-bottom: 8px; }
+        textarea, input, select {
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 12px 14px;
+            background: var(--surface-strong);
+            color: var(--text);
+            font: inherit;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        }
+        textarea:focus, input:focus, select:focus {
+            outline: none;
+            border-color: rgba(20, 115, 230, 0.5);
+            box-shadow: 0 0 0 4px rgba(20, 115, 230, 0.12);
+        }
+        textarea { min-height: 130px; resize: vertical; }
+        button {
+            border: 0;
+            border-radius: 16px;
+            padding: 12px 16px;
+            background: linear-gradient(180deg, #eef4fb, #dfeaf6);
+            color: var(--text);
+            font: inherit;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
+            box-shadow: 0 8px 18px rgba(19, 39, 62, 0.08);
+        }
+        button:hover { transform: translateY(-1px); filter: brightness(1.01); }
+        button:active { transform: translateY(0); }
+
+        .device-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; align-items: center; }
+        .device-row button { width: auto; margin-bottom: 0; }
+        .connect-indicator { width: 20px; height: 20px; border: 2.5px solid #d3dbe4; border-top-color: #0a84ff; border-radius: 50%; opacity: 0; transition: opacity 0.2s ease; }
+        .connect-indicator.is-active { opacity: 1; animation: spin 0.8s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        .slider-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
+        .slider-hint { font-size: 12px; color: #5f6b77; }
+        .checkbox-row { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; color: var(--text); text-transform: none; letter-spacing: 0; }
+        .checkbox-row input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); }
+        .actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 0.95fr); gap: 12px; align-items: stretch; }
+        .actions button { margin-bottom: 0; min-height: 56px; }
+        #previewBtn { background: linear-gradient(180deg, #eef5ff, #dce9ff); color: var(--primary-strong); }
+        #printBtn {
+            background: linear-gradient(135deg, var(--accent), #15c77c);
+            color: #ffffff;
+            box-shadow: 0 16px 28px rgba(0, 168, 107, 0.3);
+            font-size: 17px;
+            letter-spacing: 0.01em;
+        }
+        #refreshBtn, #fontSizeBtn, #fontBtn, #fontSizeCancelBtn, #fontCancelBtn { background: linear-gradient(180deg, #f4f7fb, #e5edf6); }
+        #connectBtn, #fontSizeOkBtn, #fontOkBtn { background: linear-gradient(180deg, #e6f1ff, #cfe2ff); color: var(--primary-strong); }
+
+        .preview-wrapper { position: relative; }
+        .preview-area { display: flex; gap: 14px; align-items: flex-start; }
+        #previewFrame { width: 420px; min-width: 420px; min-height: 160px; border: 1px solid var(--line-strong); border-radius: 24px; overflow: hidden; display: flex; flex-direction: row; align-items: stretch; flex-shrink: 0; box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 14px 26px rgba(30, 54, 87, 0.12); }
+        .carrier-strip { width: 20px; flex-shrink: 0; background-color: #d4d4d4; background-image: repeating-linear-gradient(0deg, rgba(255,255,255,0) 0, rgba(255,255,255,0) 6px, rgba(0,0,0,0.08) 6px, rgba(0,0,0,0.08) 7px); }
+        .label-area { flex: 1; background: linear-gradient(180deg, #ffffff, #f8fbff); display: flex; align-items: center; justify-content: center; }
+        #preview { max-width: 100%; visibility: hidden; }
+        #preview.is-visible { visibility: visible; }
+        .preview-side-actions { position: relative; display: flex; flex-direction: column; gap: 10px; min-width: 136px; }
+        .preview-side-actions button { width: auto; margin-bottom: 0; white-space: nowrap; padding: 12px 14px; }
+        .preview-actions { margin-top: 14px; }
+        .side-overlay { position: absolute; left: 0; top: calc(100% + 10px); z-index: 200; background: rgba(255,255,255,0.96); border: 1px solid var(--line); border-radius: 20px; padding: 16px; box-shadow: 0 22px 40px rgba(20, 48, 80, 0.2); backdrop-filter: blur(14px); }
+        .side-overlay.is-hidden { display: none; }
+        .overlay-title { font-size: 14px; font-weight: 700; color: #13273e; margin-bottom: 12px; }
+        .overlay-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+        .overlay-footer button { width: auto; margin-bottom: 0; }
+        #fontSizeOverlay { min-width: 260px; }
+        #fontOverlay { left: calc(100% + 12px); top: 46px; min-width: 320px; width: 336px; max-height: 430px; overflow-y: auto; }
+
+        #status { white-space: pre-wrap; font-family: "WebFontIBMPlexMono", monospace; background: #f5f9fd; padding: 14px; border-radius: 16px; border: 1px solid var(--line); }
+        #connectionState { font-size: 12px; color: #4d5966; margin-top: 2px; }
+        #connectionState.is-scanning { color: #0a84ff; }
+        #connectionState.is-connected { color: #117a37; font-weight: 600; }
+        #connectionState.is-error { color: #b42318; font-weight: 600; }
+
+        .font-summary { align-self: stretch; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 4px 2px 0; }
+        #fontLabel { font-size: 14px; font-weight: 700; color: #13273e; margin-bottom: 0; line-height: 1.2; }
+        #fontMeta { display: block; font-size: 11px; color: #6a7d90; margin-top: 3px; line-height: 1.2; text-align: center; }
+        .font-group { margin-top: 8px; }
+        .font-group:first-of-type { margin-top: 0; }
+        .font-group-title { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #4f5d6b; margin-bottom: 5px; }
+        .font-grid { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 0; }
+        .font-option { border: 1px solid #d5dde7; border-radius: 14px; padding: 8px 9px; cursor: pointer; background: #ffffff; }
+        .font-option.is-selected { border-color: #0a84ff; background: #eef6ff; }
+        .font-name { font-size: 13px; font-weight: 700; margin-bottom: 1px; }
+        .font-tags { font-size: 11px; color: #5f6b77; margin-bottom: 4px; }
+        .font-sample { font-size: 14px; color: #1f2731; line-height: 1.15; }
+
+        @media (max-width: 840px) {
+            .hero { flex-direction: column; }
+            .device-row, .actions { grid-template-columns: 1fr; }
+            .preview-area { flex-direction: column; }
+            #previewFrame { width: 100%; min-width: 0; }
+            .preview-side-actions { width: 100%; min-width: 0; flex-direction: row; }
+            .preview-side-actions button { flex: 1; }
+            #fontOverlay { left: 0; top: calc(100% + 10px); min-width: min(320px, calc(100vw - 40px)); width: min(320px, calc(100vw - 40px)); max-height: none; }
+        }
+
+    </style>
 </head>
 <body>
-  <h1>TiMini Web Print</h1>
-  <p>Browser UI for scan, preview, and label printing.</p>
-
   <div class=\"row\">
     <div class=\"card\">
-      <label for=\"text\">Label text</label>
-      <textarea id=\"text\">ABCDEFGHIJKLMNOPQRSTUVWXYZ</textarea>
+            <div class=\"hero\">
+                <div>
+                    <div class=\"hero-badge\">Progressive Print UI</div>
+                    <h1>TiMini Web Print</h1>
+                    <p>Fast browser workflow for scan, preview, and label printing.</p>
+                </div>
+            </div>
+            <div class=\"section section-card\">
+                <label for=\"deviceSelect\">Printer</label>
+                <div class=\"device-row\">
+                    <select id=\"deviceSelect\"></select>
+                    <button id=\"refreshBtn\" type=\"button\">Refresh</button>
+                    <button id=\"connectBtn\" type=\"button\">Connect</button>
+                    <span id=\"connectSpinner\" class=\"connect-indicator\" title=\"Connecting\"></span>
+                </div>
+                <div id=\"connectionState\">Not connected.</div>
+            </div>
 
-      <label for=\"bluetooth\">Bluetooth target (name or address)</label>
-      <input id=\"bluetooth\" placeholder=\"optional, leave empty for first supported printer\" />
+            <div class=\"section section-card\">
+                <label for=\"text\">Label text</label>
+                <textarea id=\"text\">ABCDEFGHIJKLMNOPQRSTUVWXYZ</textarea>
+            </div>
 
-      <label for=\"serial\">Serial port (optional)</label>
-      <input id=\"serial\" placeholder=\"optional, e.g. /dev/rfcomm0\" />
+            <div class=\"section section-card\">
+                <div class=\"preview-wrapper\">
+                    <div class=\"preview-area\">
+                        <div id=\"previewFrame\"><div class=\"carrier-strip\"></div><div class=\"label-area\"><img id=\"preview\" alt=\"preview\" /></div><div class=\"carrier-strip\"></div></div>
+                        <div class=\"preview-side-actions\">
+                            <button id=\"fontBtn\" type=\"button\">Font</button>
+                            <button id=\"fontSizeBtn\" type=\"button\">Font size</button>
+                            <div class=\"font-summary\">
+                                <div id=\"fontLabel\"></div>
+                                <div id=\"fontMeta\"></div>
+                            </div>
+                            <div id=\"fontOverlay\" class=\"side-overlay is-hidden\">
+                                <div class=\"overlay-title\">Font</div>
+                                <div id=\"fontList\" class=\"font-grid\"></div>
+                                <div class=\"overlay-footer\">
+                                    <button id=\"fontCancelBtn\" type=\"button\">Cancel</button>
+                                    <button id=\"fontOkBtn\" type=\"button\">OK</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id=\"fontSizeOverlay\" class=\"side-overlay is-hidden\">
+                        <div class=\"overlay-title\">Font size</div>
+                        <div class=\"slider-row\">
+                            <span class=\"slider-hint\">small</span>
+                            <input id=\"columns\" type=\"range\" min=\"15\" max=\"52\" value=\"52\" />
+                            <span id=\"columnsValue\" class=\"slider-hint\">15 cpl</span>
+                        </div>
+                        <div class=\"overlay-footer\">
+                            <button id=\"fontSizeCancelBtn\" type=\"button\">Cancel</button>
+                            <button id=\"fontSizeOkBtn\" type=\"button\">OK</button>
+                        </div>
+                    </div>
+                </div>
+                <div class=\"preview-actions actions\">
+                    <button id=\"previewBtn\" type=\"button\">Refresh Preview</button>
+                    <button id=\"printBtn\" type=\"button\">Print Label</button>
+                </div>
+            </div>
 
-      <label for=\"deviceConfig\">Device config path (optional, needed for serial/manual profile)</label>
-      <input id=\"deviceConfig\" placeholder=\"optional path to exported device config json\" />
+            <div class=\"section section-card\">
+                <label for=\"darkness\">Darkness</label>
+                <input id=\"darkness\" type=\"number\" min=\"1\" max=\"5\" value=\"3\" />
+                <label class=\"checkbox-row\"><input id=\"hardWrap\" type=\"checkbox\" /> Hard wrap text</label>
+            </div>
 
-      <label for=\"columns\">Text columns (cpl)</label>
-      <input id=\"columns\" type=\"number\" min=\"1\" max=\"120\" value=\"15\" />
-
-      <label for=\"darkness\">Darkness</label>
-      <input id=\"darkness\" type=\"number\" min=\"1\" max=\"5\" value=\"3\" />
-
-      <label><input id=\"hardWrap\" type=\"checkbox\" /> Hard wrap text</label>
-
-      <div class=\"actions\">
-        <button id=\"scanBtn\">Scan</button>
-        <button id=\"previewBtn\">Preview</button>
-        <button id=\"printBtn\">Print</button>
+            <div class=\"section section-card\">
+                <h3>Status</h3>
+                <div id=\"status\">Ready.</div>
       </div>
-    </div>
-
-    <div class=\"card\">
-      <label for=\"profile\">Preview profile</label>
-      <select id=\"profile\"></select>
-      <img id=\"preview\" alt=\"preview\" />
-      <h3>Status</h3>
-      <div id=\"status\">Ready.</div>
     </div>
   </div>
 
 <script src="/static/app.js"></script>
 </body>
 </html>"""
+
+
+@app.get("/favicon.ico")
+def favicon() -> RedirectResponse:
+        return RedirectResponse(url="/static/favicon.svg", status_code=307)
 
 
 @app.get("/api/health")
@@ -171,8 +477,30 @@ def profiles() -> dict[str, list[dict[str, object]]]:
     }
 
 
+@app.get("/api/fonts")
+def fonts() -> dict[str, object]:
+    keys = [key for key, meta in FONT_CATALOG.items() if (FONT_DIR / meta["filename"]).exists()]
+    if not keys:
+        return {"fonts": [], "default_font_key": None}
+    default_key = DEFAULT_FONT_KEY if DEFAULT_FONT_KEY in keys else keys[0]
+    return {
+        "default_font_key": default_key,
+        "fonts": [
+            {
+                "key": key,
+                "label": FONT_CATALOG[key]["label"],
+                "family": FONT_CATALOG[key]["family"],
+                "width": FONT_CATALOG[key]["width"],
+                "css_family": FONT_CATALOG[key]["css_family"],
+            }
+            for key in keys
+        ],
+    }
+
+
 @app.post("/api/scan")
 async def scan() -> dict[str, object]:
+    active_target = _active_printer["target"] if _active_printer else None
     catalog = PrinterCatalog.load()
     discovery = BluetoothDiscovery(catalog)
     result = await discovery.scan_report(include_classic=True, include_ble=True)
@@ -184,9 +512,11 @@ async def scan() -> dict[str, object]:
                 "transport_badge": device.transport_badge,
                 "profile_key": device.profile_key,
                 "paired": device.paired,
+                "connected": device.address == active_target,
             }
             for device in result.devices
         ],
+        "active_printer": _active_printer,
         "failures": [
             {
                 "transport": failure.transport.value,
@@ -197,11 +527,38 @@ async def scan() -> dict[str, object]:
     }
 
 
+@app.post("/api/connect")
+async def connect(request: ConnectRequest) -> dict[str, str]:
+    global _active_printer
+    catalog = PrinterCatalog.load()
+    discovery = BluetoothDiscovery(catalog)
+    device = await discovery.resolve_device(request.target)
+
+    reporter = reporting.Reporter([reporting.StderrSink(levels={"debug", "warning", "error"})])
+    connector = BleakBluetoothConnector(reporter=reporter)
+    connection = await connector.connect(device)
+    await connection.disconnect()
+
+    _active_printer = {
+        "target": device.address,
+        "display_name": device.display_name,
+        "profile_key": device.profile_key,
+        "transport_badge": device.transport_badge,
+    }
+    return {
+        "target": device.address,
+        "display_name": device.display_name,
+        "profile_key": device.profile_key,
+        "transport_badge": device.transport_badge,
+    }
+
+
 @app.post("/api/preview")
 def preview(request: PreviewRequest) -> dict[str, object]:
     width = _resolve_profile_width(request.profile_key)
+    font_path = _resolve_font_path(request.text_font_key, request.text_font)
     converter = TextConverter(
-        font_path=request.text_font,
+        font_path=font_path,
         columns=request.text_columns,
         wrap_lines=not request.text_hard_wrap,
     )
@@ -223,6 +580,7 @@ def preview(request: PreviewRequest) -> dict[str, object]:
 
 
 def _build_args(request: PrintRequest) -> argparse.Namespace:
+    text_font = _resolve_font_path(request.text_font_key, request.text_font)
     return argparse.Namespace(
         path=None,
         bluetooth=request.bluetooth,
@@ -232,7 +590,7 @@ def _build_args(request: PrintRequest) -> argparse.Namespace:
         scan=False,
         list_profiles=False,
         text=request.text,
-        text_font=request.text_font,
+        text_font=text_font,
         text_columns=request.text_columns,
         text_hard_wrap=request.text_hard_wrap,
         pdf_pages=None,

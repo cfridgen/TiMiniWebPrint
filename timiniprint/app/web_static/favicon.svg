@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Bluetooth label printer">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5a6673"/>
+      <stop offset="100%" stop-color="#2f3a46"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e9eef2"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="8" y="10" width="48" height="34" rx="8" fill="url(#body)"/>
+  <rect x="13" y="16" width="38" height="6" rx="3" fill="#1f2731"/>
+  <circle cx="47" cy="30" r="2.2" fill="#3ddc84"/>
+
+  <rect x="16" y="34" width="32" height="20" rx="3" fill="url(#paper)" stroke="#c4cdd6" stroke-width="1"/>
+  <line x1="22" y1="46" x2="42" y2="46" stroke="#b4bec8" stroke-width="1.4"/>
+  <line x1="22" y1="50" x2="38" y2="50" stroke="#c0c9d2" stroke-width="1.2"/>
+
+  <path d="M31 38V52L38 46L31 40L37 34L31 30V38" fill="none" stroke="#0a84ff" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
