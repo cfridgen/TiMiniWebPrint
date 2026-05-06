@@ -1,7 +1,7 @@
 # TiMini Print Bluetooth Printer Tool
 Alternative [desktop software for Chinese Bluetooth thermal printers](https://github.com/Dejniel/TiMini-Print/releases) that use proprietary protocols (not ESC/POS), as a replacement for apps like “Tiny Print”, “Fun Print”, “Phomemo”, or “iBleem”.
 It supports almost all mini printers! Check the huge list of [supported Bluetooth printer models](#supported-printer-models), or report missing ones.
-It lets you print images, PDFs, or plain text from your computer. It supports both a GUI and a “fire-and-forget” CLI mode, plus [custom integrations](#library-integration).
+It lets you print images, PDFs, or plain text from your computer. It supports a web app and a “fire-and-forget” CLI mode, plus [custom integrations](#library-integration).
 
 These printers are often sold on AliExpress and under generic names such as “thermal printer”, “mini printer”, or “cat printer”.
 TiMini Print works on Windows, Linux, and macOS as a standalone tool without a system printer driver (it does not emulate a driver or print spooler)
@@ -19,37 +19,25 @@ I bought a Chinese mini printer and could not find any decent desktop software t
 - If you need security/reverse engineering, broader commercial support, or a custom implementation, feel free to [reach out](https://inajiffy.eu/). I work on broken systems, neglected integrations, and projects that are already end-of-life, unsupported — or simply unsupportable. I also handle custom implementation work that sits outside the usual support model
 
 # Requirements
-You can find the latest standalone executable files on the [releases page](https://github.com/Dejniel/TiMini-Print/releases) and choose the asset that starts with `TiMini-Print-GUI-...` or `TiMini-Print-Command-Line-...` for your platform, or you can build the project yourself
+You can find the latest standalone executable files on the [releases page](https://github.com/Dejniel/TiMini-Print/releases) and choose the asset that starts with `TiMini-Print-Command-Line-...` for your platform, or you can build the project yourself
 
 Theoretically, I support Windows, macOS, and Linux, but I test builds only on Ubuntu-like systems—if you need to run this elsewhere, please report issues or submit a fix :P
 
 ## Manual building requirements
 - Python 3.8+
 - `pip install -r requirements.txt` (Note: Windows + Python 3.13+: installing `winsdk` may require building binaries during download)
-- (optional, GUI only) if `tkinter` is missing, install it from your system packages:
-  Linux (Ubuntu/Debian): `sudo apt install python3-tk`
-  macOS (Homebrew Python): `brew install python-tk`
-
 # Quick start
 If you use release binaries, run the downloaded executable directly.
-If you build or run from source instead, use `python3 timiniprint_gui.py` or `python3 timiniprint_command_line.py`.
+If you build or run from source instead, use `python3 timiniprint_web.py` or `python3 timiniprint_command_line.py`.
 
-## Graphical user interface
-You can scan, connect or disconnect with one button, choose a file, and print.
-Start the graphical app by running the [downloaded executable file](#requirements).
-On Linux, make sure it has execute permission first.
+## Web app
+Start the web app from source:
 
 ```bash
-# Replace the filename below with the matching asset for your platform
-chmod +x ./TiMini-Print-GUI-Linux-x86_64
-./TiMini-Print-GUI-Linux-x86_64
+python3 timiniprint_web.py
 ```
 
-Or run it from source:
-
-```bash
-python3 timiniprint_gui.py
-```
+Then open `http://127.0.0.1:8000` in your browser.
 
 ## Command line interface
 (the examples use Linux filenames)
@@ -93,7 +81,7 @@ python3 timiniprint_gui.py
 - On first Classic connection on Windows/macOS, the system may request pairing confirmation
 
 ## Library integration
-If you want to build your own integration instead of using only the bundled GUI or CLI, start with [docs/protocol.md](docs/protocol.md). It is the practical first-steps guide to creating a `PrinterDevice`, building a printable job, and sending it through a connector from your own code. If you also want the package boundaries and design rationale behind that API, continue with [docs/architecture.md](docs/architecture.md).
+If you want to build your own integration instead of using only the bundled web app or CLI, start with [docs/protocol.md](docs/protocol.md). It is the practical first-steps guide to creating a `PrinterDevice`, building a printable job, and sending it through a connector from your own code. If you also want the package boundaries and design rationale behind that API, continue with [docs/architecture.md](docs/architecture.md).
 
 # Supported formats
 - Images: .png .jpg .jpeg .gif .bmp

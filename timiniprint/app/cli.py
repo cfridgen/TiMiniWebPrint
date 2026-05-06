@@ -56,7 +56,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     motion_group = parser.add_mutually_exclusive_group()
     motion_group.add_argument("--feed", action="store_true", help="Advance paper")
     motion_group.add_argument("--retract", action="store_true", help="Retract paper")
-    parser.epilog = "If any CLI options/arguments are provided, the GUI will not be launched."
+    parser.epilog = "Use the web UI (timiniprint_web.py) for interactive usage, or CLI options for scripted usage."
     return parser.parse_args(argv)
 
 

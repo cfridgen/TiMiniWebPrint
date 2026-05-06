@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import runpy
 import unittest
 from pathlib import Path
@@ -17,17 +16,6 @@ class EnvironmentEntrypointTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 runpy.run_path(str(path), run_name="__main__")
         self.assertEqual(cm.exception.code, 7)
-        self.assertEqual(main_mock.call_count, 1)
-
-    def test_gui_entrypoint_delegates_to_gui_main(self) -> None:
-        if importlib.util.find_spec("tkinter") is None:
-            self.skipTest("tkinter is not installed in this test environment")
-        path = _ROOT / "timiniprint_gui.py"
-        gui_module = importlib.import_module("timiniprint.app.gui")
-        with patch.object(gui_module, "main", return_value=9) as main_mock:
-            with self.assertRaises(SystemExit) as cm:
-                runpy.run_path(str(path), run_name="__main__")
-        self.assertEqual(cm.exception.code, 9)
         self.assertEqual(main_mock.call_count, 1)
 
     def test_module_entrypoint_delegates_to_cli_main(self) -> None:
