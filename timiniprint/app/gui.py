@@ -510,7 +510,10 @@ class TiMiniPrintGUI(tk.Tk):
             measured_font = tkfont.Font(font=self.text_input.cget("font"))
             if self._preview_area_width_px is None:
                 # Calibrate once from the default 15 cpl view; printer width is fixed afterwards.
-                content_width = measured_font.measure("ABCDEFGHIJKLMNO")
+                alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                repeats = (PREVIEW_WRAP_COLUMNS // len(alphabet)) + 1
+                preview_sample = (alphabet * repeats)[:PREVIEW_WRAP_COLUMNS]
+                content_width = measured_font.measure(preview_sample)
                 self._preview_area_width_px = max(220, min(760, content_width + 24))
             self.text_input_container.configure(width=self._preview_area_width_px)
         except Exception:

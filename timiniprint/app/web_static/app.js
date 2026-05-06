@@ -4,17 +4,37 @@ function log(msg) {
   $("status").textContent = msg;
 }
 
+async function parseJsonOrLog(res, context) {
+  try {
+    return await res.json();
+  } catch (err) {
+    log(`${context}: invalid JSON response: ${err}`);
+    return null;
+  }
+}
+
 async function loadProfiles() {
-  const res = await fetch('/api/profiles');
-  const data = await res.json();
-  const select = $('profile');
-  select.innerHTML = '';
-  data.profiles.forEach((p) => {
-    const opt = document.createElement('option');
-    opt.value = p.profile_key;
-    opt.textContent = `${p.profile_key} (${p.width}px)`;
-    select.appendChild(opt);
-  });
+  try {
+    const res = await fetch('/api/profiles');
+    const data = await parseJsonOrLog(res, 'Profile load failed');
+    if (!data) {
+      return;
+    }
+    if (!res.ok) {
+      log(`Profile load failed: ${JSON.stringify(data)}`);
+      return;
+    }
+    const select = $('profile');
+    select.innerHTML = '';
+    data.profiles.forEach((p) => {
+      const opt = document.createElement('option');
+      opt.value = p.profile_key;
+      opt.textContent = `${p.profile_key} (${p.width}px)`;
+      select.appendChild(opt);
+    });
+  } catch (err) {
+    log(`Profile load failed: ${err}`);
+  }
 }
 
 function payloadBase() {
@@ -31,53 +51,75 @@ function payloadBase() {
 
 $('scanBtn').addEventListener('click', async () => {
   log('Scanning...');
-  const res = await fetch('/api/scan', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({})
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    log(`Scan failed: ${JSON.stringify(data)}`);
-    return;
+  try {
+    const res = await fetch('/api/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({})
+    });
+    const data = await parseJsonOrLog(res, 'Scan failed');
+    if (!data) {
+      return;
+    }
+    if (!res.ok) {
+      log(`Scan failed: ${JSON.stringify(data)}`);
+      return;
+    }
+    const lines = data.devices
+      .map((d) => `${d.display_name} (${d.address}) ${d.transport_badge}`)
+      .join('\n');
+    log(lines || 'No supported printers found.');
+  } catch (err) {
+    log(`Scan failed: ${err}`);
   }
-  const lines = data.devices
-    .map((d) => `${d.display_name} (${d.address}) ${d.transport_badge}`)
-    .join('\n');
-  log(lines || 'No supported printers found.');
 });
 
 $('previewBtn').addEventListener('click', async () => {
   log('Rendering preview...');
-  const payload = payloadBase();
-  payload.profile_key = $('profile').value || null;
-  const res = await fetch('/api/preview', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    log(`Preview failed: ${JSON.stringify(data)}`);
-    return;
+  try {
+    const payload = payloadBase();
+    payload.profile_key = $('profile').value || null;
+    const res = await fetch('/api/preview', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await parseJsonOrLog(res, 'Preview failed');
+    if (!data) {
+      return;
+    }
+    if (!res.ok) {
+      log(`Preview failed: ${JSON.stringify(data)}`);
+      return;
+    }
+    $('preview').src = data.image_data;
+    $('preview').classList.add('is-visible');
+    log(`Preview ready (${data.width}x${data.height}).`);
+  } catch (err) {
+    log(`Preview failed: ${err}`);
   }
-  $('preview').src = data.image_data;
-  log(`Preview ready (${data.width}x${data.height}).`);
 });
 
 $('printBtn').addEventListener('click', async () => {
   log('Printing...');
-  const res = await fetch('/api/print', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(payloadBase())
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    log(`Print failed: ${JSON.stringify(data)}`);
-    return;
+  try {
+    const res = await fetch('/api/print', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payloadBase())
+    });
+    const data = await parseJsonOrLog(res, 'Print failed');
+    if (!data) {
+      return;
+    }
+    if (!res.ok) {
+      log(`Print failed: ${JSON.stringify(data)}`);
+      return;
+    }
+    log(data.message);
+  } catch (err) {
+    log(`Print failed: ${err}`);
   }
-  log(data.message);
 });
 
 loadProfiles().catch((err) => log(String(err)));

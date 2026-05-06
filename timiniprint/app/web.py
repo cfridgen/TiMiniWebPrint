@@ -64,10 +64,6 @@ class PrintRequest(BaseModel):
     darkness: int = Field(default=3, ge=1, le=5)
 
 
-class ScanRequest(BaseModel):
-    target: str | None = None
-
-
 def _normalize_width(width: int) -> int:
     if width % 8 == 0:
         return width
@@ -104,7 +100,8 @@ def index() -> str:
     textarea, input, select, button { width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 8px; }
     textarea { min-height: 130px; resize: vertical; }
     .actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-    #preview { max-width: 100%; border: 1px solid #ddd; background: #fff; }
+    #preview { display: none; max-width: 100%; border: 1px solid #ddd; background: #fff; }
+    #preview.is-visible { display: block; }
     #status { white-space: pre-wrap; font-family: monospace; background: #f7f7f7; padding: 10px; border-radius: 8px; }
   </style>
 </head>
@@ -175,7 +172,7 @@ def profiles() -> dict[str, list[dict[str, object]]]:
 
 
 @app.post("/api/scan")
-async def scan(_request: ScanRequest) -> dict[str, object]:
+async def scan() -> dict[str, object]:
     catalog = PrinterCatalog.load()
     discovery = BluetoothDiscovery(catalog)
     result = await discovery.scan_report(include_classic=True, include_ble=True)
@@ -261,7 +258,8 @@ async def print_label(request: PrintRequest) -> dict[str, str]:
             reporter = reporting.Reporter([reporting.StderrSink(levels={"debug", "warning", "error"})])
             code = await asyncio.to_thread(cli_app.print_bluetooth, args, reporter)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        logger.exception("Unexpected error while handling /api/print request", exc_info=exc)
+        raise HTTPException(status_code=500, detail="PRINT_UNEXPECTED_ERROR") from exc
 
     if code != 0:
         raise HTTPException(status_code=500, detail=f"Print failed with exit code {code}")
