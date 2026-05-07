@@ -42,7 +42,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends liblzo2-2 tini \
+  && apt-get install -y --no-install-recommends liblzo2-2 tini bluez dbus \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=pybuilder /wheels /wheels

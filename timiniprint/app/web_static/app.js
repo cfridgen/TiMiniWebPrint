@@ -382,6 +382,12 @@ async function loadProfiles() {
       select.appendChild(opt);
     });
 
+    if (Array.isArray(data.failures) && data.failures.length > 0) {
+      data.failures.forEach((failure) => {
+        log(`Scan warning [${failure.transport}]: ${failure.error}`);
+      });
+    }
+
     if (data.devices.length === 0) {
       connectedTarget = null;
       connectedProfileKey = null;
