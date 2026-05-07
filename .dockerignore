@@ -1,0 +1,15 @@
+.git
+.github
+.vscode
+venv
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+tests
+docs
+TiMini-Print-Command-Line-Linux-x86_64
+TiMini-Print-GUI-Linux-x86_64
+*.jpg

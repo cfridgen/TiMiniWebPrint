@@ -8,9 +8,58 @@ let selectedFontKey = null;
 let pendingFontKey = null;
 let previousFontKey = null;
 let previousColumnsValue = null;
+let previewDebounceTimer = null;
+let statusHideTimer = null;
+let statusHistory = ['Ready.'];
+let busyLockCount = 0;
+let isPrinting = false;
+let printAbortController = null;
 
 function log(msg) {
-  $("status").textContent = msg;
+  const text = String(msg || '');
+  statusHistory.push(text);
+  if (statusHistory.length > 5) {
+    statusHistory = statusHistory.slice(statusHistory.length - 5);
+  }
+
+  const toastText = $('statusToastText');
+  const toast = $('statusToast');
+  if (toastText && toast) {
+    toastText.textContent = text;
+    toast.classList.add('is-visible');
+    if (statusHideTimer) {
+      clearTimeout(statusHideTimer);
+    }
+    statusHideTimer = setTimeout(() => {
+      toast.classList.remove('is-visible');
+      statusHideTimer = null;
+    }, 2800);
+  }
+
+  const list = $('statusHistoryList');
+  if (list) {
+    list.innerHTML = '';
+    [...statusHistory].reverse().forEach((entry) => {
+      const item = document.createElement('li');
+      item.textContent = entry;
+      list.appendChild(item);
+    });
+  }
+}
+
+function updateConnectButtonState() {
+  const connectBtn = $('connectBtn');
+  if (!connectBtn) {
+    return;
+  }
+  const select = $('deviceSelect');
+  const selected = selectedDeviceTarget();
+  const selectedOption = select ? select.options[select.selectedIndex] : null;
+  const alreadyConnected = Boolean(
+    (selectedOption && selectedOption.dataset.connected === 'true') ||
+    (connectedTarget && selected && connectedTarget === selected)
+  );
+  connectBtn.disabled = isConnecting || !selected || alreadyConnected;
 }
 
 function setConnectionState(text, stateClass = '') {
@@ -22,8 +71,43 @@ function setConnectionState(text, stateClass = '') {
   }
 }
 
+function setBusy(active, msg = 'Bitte warten…', mode = 'wait') {
+  const overlay = $('busyOverlay');
+  const msgEl = $('busyMessage');
+  const cancelBtn = $('busyCancelBtn');
+  if (!overlay) return;
+  if (msgEl) msgEl.textContent = msg;
+  if (cancelBtn) {
+    cancelBtn.classList.toggle('is-hidden', mode !== 'print');
+  }
+  if (active) {
+    overlay.classList.remove('is-force-hidden');
+  }
+  overlay.classList.toggle('is-active', active);
+  if (!active) {
+    overlay.classList.remove('is-force-hidden');
+  }
+}
+
+function beginBusy(msg, mode = 'wait') {
+  busyLockCount += 1;
+  setBusy(true, msg, mode);
+}
+
+function endBusy() {
+  busyLockCount = Math.max(0, busyLockCount - 1);
+  if (busyLockCount === 0) {
+    setBusy(false);
+  }
+}
+
 function setConnecting(active) {
   isConnecting = active;
+  if (active) {
+    beginBusy('Scanning / connecting printer…', 'wait');
+  } else {
+    endBusy();
+  }
   const spinner = $('connectSpinner');
   const connectBtn = $('connectBtn');
   if (active) {
@@ -33,8 +117,8 @@ function setConnecting(active) {
     return;
   }
   spinner.classList.remove('is-active');
-  connectBtn.disabled = false;
   connectBtn.textContent = 'Connect';
+  updateConnectButtonState();
 }
 
 function upsertConnectedOption(target, profileKey, labelText) {
@@ -46,6 +130,7 @@ function upsertConnectedOption(target, profileKey, labelText) {
     select.appendChild(option);
   }
   option.dataset.profileKey = profileKey || option.dataset.profileKey || '';
+  option.dataset.connected = 'true';
   option.textContent = labelText;
   select.value = target;
 }
@@ -96,12 +181,20 @@ function canUseFontForName(font) {
   return !/(symbol|emoji|icon|dingbat|material)/i.test(marker);
 }
 
+function syncTextToFontSummary() {
+  if (!$('syncFontToggle') || !$('syncFontToggle').checked) return;
+  const selectedFont = fontByKey(selectedFontKey);
+  const fontLabel = selectedFont ? selectedFont.label : 'No font selected';
+  $('text').value = `${fontLabel}\n${currentColumnsValue()} cpl`;
+}
+
 function updateFontSummary() {
   const selectedFont = fontByKey(selectedFontKey);
   $('fontLabel').textContent = selectedFont ? selectedFont.label : 'No font selected';
   $('fontLabel').style.fontFamily = canUseFontForName(selectedFont)
     ? `${selectedFont.css_family}, sans-serif`
     : '';
+  $('text').style.fontFamily = selectedFont ? `${selectedFont.css_family}, sans-serif` : '';
   $('fontMeta').textContent = `${currentColumnsValue()} cpl`;
 }
 
@@ -151,6 +244,7 @@ function renderFontOptions() {
         selectedFontKey = font.key;
         renderFontOptions();
         updateFontSummary();
+        syncTextToFontSummary();
         renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
       });
       grid.appendChild(option);
@@ -162,7 +256,43 @@ function renderFontOptions() {
 }
 
 function setFontPanelVisible(visible) {
-  $('fontOverlay').classList.toggle('is-hidden', !visible);
+  const overlay = $('fontOverlay');
+  overlay.classList.toggle('is-hidden', !visible);
+  if (visible) {
+    // Double rAF: first frame removes display:none, second frame has layout
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const selected = overlay.querySelector('.is-selected');
+      if (!selected) return;
+      // offsetTop of selected relative to overlay (the scroll container)
+      const itemTop = selected.getBoundingClientRect().top - overlay.getBoundingClientRect().top + overlay.scrollTop;
+      const itemHeight = selected.offsetHeight;
+      overlay.scrollTop = itemTop - overlay.clientHeight / 2 + itemHeight / 2;
+    }));
+  }
+}
+
+function positionFontOverlay() {
+  const overlay = $('fontOverlay');
+  const trigger = $('fontBtn');
+  if (!overlay || !trigger || overlay.classList.contains('is-hidden')) {
+    return;
+  }
+
+  overlay.style.top = '';
+  overlay.style.bottom = '';
+
+  const triggerRect = trigger.getBoundingClientRect();
+  const overlayHeight = Math.min(overlay.scrollHeight || 0, 430);
+  const spaceBelow = window.innerHeight - triggerRect.bottom;
+  const spaceAbove = triggerRect.top;
+  const preferAbove = spaceAbove > spaceBelow && spaceAbove >= overlayHeight - 40;
+
+  if (preferAbove) {
+    overlay.style.top = `${-(overlayHeight - triggerRect.height)}px`;
+    return;
+  }
+
+  overlay.style.top = 'calc(100% + 10px)';
 }
 
 async function loadFonts() {
@@ -195,6 +325,19 @@ function updateColumnsLabel() {
   updateFontSummary();
 }
 
+function editorTextValue() {
+  return $('text').value || '';
+}
+
+function schedulePreview() {
+  if (previewDebounceTimer) {
+    clearTimeout(previewDebounceTimer);
+  }
+  previewDebounceTimer = setTimeout(() => {
+    renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
+  }, 120);
+}
+
 async function parseJsonOrLog(res, context) {
   try {
     return await res.json();
@@ -208,6 +351,7 @@ async function loadProfiles() {
   if (isConnecting) {
     return;
   }
+  beginBusy('Scanning for printers…', 'wait');
   setConnectionState('Scanning for printers...', 'is-scanning');
   const select = $('deviceSelect');
   try {
@@ -231,6 +375,7 @@ async function loadProfiles() {
       const opt = document.createElement('option');
       opt.value = d.address;
       opt.dataset.profileKey = d.profile_key || '';
+      opt.dataset.connected = d.connected ? 'true' : 'false';
       const name = d.display_name || 'Unknown';
       const badge = d.connected ? ' [connected]' : '';
       opt.textContent = `${name} (${d.address}) ${d.transport_badge || ''}${badge}`.trim();
@@ -241,6 +386,7 @@ async function loadProfiles() {
       connectedTarget = null;
       connectedProfileKey = null;
       setConnectionState('No supported printers found.', 'is-error');
+      updateConnectButtonState();
       log('No supported printers found.');
       return;
     }
@@ -255,31 +401,40 @@ async function loadProfiles() {
         `${active.display_name || connectedTarget} (${connectedTarget}) ${active.transport_badge || ''} [connected]`.trim()
       );
       setConnectionState(`Connected: ${active.display_name || connectedTarget}`, 'is-connected');
+      updateConnectButtonState();
       log(`Using active printer: ${active.display_name || connectedTarget}.`);
       return;
     }
 
     connectedTarget = null;
     connectedProfileKey = selectedDeviceProfile();
+    updateConnectButtonState();
     setConnectionState('Auto-connecting first detected printer...', 'is-scanning');
     await connectSelected(true);
   } catch (err) {
     log(`Scan failed: ${err}`);
     setConnectionState('Scan failed.', 'is-error');
+    updateConnectButtonState();
+  } finally {
+    endBusy();
   }
 }
 
 function payloadBase() {
   return {
-    text: $('text').value,
+    text: editorTextValue(),
+    profile_key: connectedProfileKey || selectedDeviceProfile(),
     bluetooth: connectedTarget || selectedDeviceTarget(),
     serial: null,
     device_config: null,
     text_columns: currentColumnsValue(),
-    text_hard_wrap: $('hardWrap').checked,
     text_font_key: selectedFontKey,
     darkness: Number($('darkness').value || 3),
   };
+}
+
+async function buildPrintPayload() {
+  return payloadBase();
 }
 
 $('refreshBtn').addEventListener('click', async () => {
@@ -320,6 +475,7 @@ async function connectSelected(autoConnect = false) {
       `${data.display_name || target} (${connectedTarget}) ${data.transport_badge || ''} [connected]`.trim()
     );
     setConnectionState(`Connected: ${data.display_name || target}`, 'is-connected');
+    updateConnectButtonState();
     log(`Connected to ${data.display_name || target}.`);
   } catch (err) {
     log(`Connect failed: ${err}`);
@@ -357,6 +513,8 @@ $('fontSizeCancelBtn').addEventListener('click', (e) => {
 $('fontSizeOkBtn').addEventListener('click', (e) => {
   e.stopPropagation();
   $('fontSizeOverlay').classList.add('is-hidden');
+  updateColumnsLabel();
+  renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
 });
 
 $('fontBtn').addEventListener('click', (e) => {
@@ -366,6 +524,7 @@ $('fontBtn').addEventListener('click', (e) => {
   renderFontOptions();
   $('fontSizeOverlay').classList.add('is-hidden');
   setFontPanelVisible(true);
+  positionFontOverlay();
 });
 
 $('fontCancelBtn').addEventListener('click', (e) => {
@@ -395,6 +554,12 @@ document.addEventListener('click', (e) => {
     previousFontKey = selectedFontKey;
     fo.classList.add('is-hidden');
   }
+  const shp = $('statusHistoryPanel');
+  const shb = $('statusHistoryBtn');
+  if (shp && !shp.classList.contains('is-hidden') &&
+      !shp.contains(e.target) && e.target !== shb) {
+    shp.classList.add('is-hidden');
+  }
 });
 
 async function renderPreview(manual = false) {
@@ -403,12 +568,10 @@ async function renderPreview(manual = false) {
   }
   const requestId = ++previewRequestSeq;
   try {
-    const payload = payloadBase();
-    payload.profile_key = connectedProfileKey || selectedDeviceProfile();
     const res = await fetch('/api/preview', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payloadBase())
     });
     const data = await parseJsonOrLog(res, 'Preview failed');
     if (!data) {
@@ -431,12 +594,23 @@ async function renderPreview(manual = false) {
 }
 
 $('printBtn').addEventListener('click', async () => {
+  if (isPrinting) {
+    log('Print already in progress.');
+    return;
+  }
   log('Printing...');
+  isPrinting = true;
+  printAbortController = new AbortController();
+  $('printBtn').disabled = true;
+  $('printBtn').textContent = 'Printing...';
+  beginBusy('Printing…', 'print');
   try {
+    const payload = await buildPrintPayload();
     const res = await fetch('/api/print', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payloadBase())
+      body: JSON.stringify(payload),
+      signal: printAbortController.signal,
     });
     const data = await parseJsonOrLog(res, 'Print failed');
     if (!data) {
@@ -448,29 +622,74 @@ $('printBtn').addEventListener('click', async () => {
     }
     log(data.message);
   } catch (err) {
+    if (err && err.name === 'AbortError') {
+      log('Print request cancelled. Printer may continue if it already started.');
+      return;
+    }
     log(`Print failed: ${err}`);
+  } finally {
+    isPrinting = false;
+    printAbortController = null;
+    $('printBtn').disabled = false;
+    $('printBtn').textContent = 'Print Label';
+    endBusy();
+  }
+});
+
+$('busyHideBtn').addEventListener('click', () => {
+  $('busyOverlay').classList.add('is-force-hidden');
+});
+
+$('busyCancelBtn').addEventListener('click', () => {
+  $('busyOverlay').classList.add('is-force-hidden');
+  if (isPrinting && printAbortController) {
+    log('Cancelling print request...');
+    try {
+      printAbortController.abort();
+    } catch (err) {
+      log(`Cancel request failed: ${err}`);
+    }
   }
 });
 
 $('columns').addEventListener('input', () => {
   updateColumnsLabel();
-  renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
+  syncTextToFontSummary();
+  schedulePreview();
+});
+
+$('columns').addEventListener('change', () => {
+  updateColumnsLabel();
+  syncTextToFontSummary();
+  schedulePreview();
 });
 
 $('text').addEventListener('input', () => {
-  renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
+  schedulePreview();
 });
 
 $('deviceSelect').addEventListener('change', () => {
   if (!connectedTarget) {
     connectedProfileKey = selectedDeviceProfile();
   }
+  updateConnectButtonState();
+});
+
+$('statusHistoryBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('statusHistoryPanel').classList.toggle('is-hidden');
+});
+
+window.addEventListener('resize', () => {
+  positionFontOverlay();
 });
 
 async function init() {
   updateColumnsLabel();
   await loadFonts();
   await loadProfiles();
+  updateConnectButtonState();
+  await renderPreview(false);
 }
 
 init().catch((err) => log(String(err)));

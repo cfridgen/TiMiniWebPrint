@@ -95,7 +95,7 @@ FONT_CATALOG: dict[str, dict[str, str]] = {
         "css_family": "WebFontNotoSansSymbols2",
     },
 }
-DEFAULT_FONT_KEY = "ibm_plex_mono"
+DEFAULT_FONT_KEY = "roboto_mono_variable"
 
 app.mount("/static", StaticFiles(directory=WEB_STATIC_DIR), name="static")
 logger = logging.getLogger("timiniprint.web")
@@ -126,21 +126,20 @@ class PreviewRequest(BaseModel):
     text: str = Field(default="ABCDEFGHIJKLMNOPQRSTUVWXYZ")
     profile_key: str | None = None
     text_columns: int = Field(default=15, ge=1, le=120)
-    text_hard_wrap: bool = False
     text_font: str | None = None
     text_font_key: str | None = None
 
 
 class PrintRequest(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = Field(default="")
     bluetooth: str | None = None
     serial: str | None = None
     device_config: str | None = None
     text_columns: int = Field(default=15, ge=1, le=120)
-    text_hard_wrap: bool = False
     text_font: str | None = None
     text_font_key: str | None = None
     darkness: int = Field(default=3, ge=1, le=5)
+    image_data: str | None = None
 
 
 class ConnectRequest(BaseModel):
@@ -163,7 +162,8 @@ def _resolve_profile_width(profile_key: str | None) -> int:
     profiles = catalog.profiles
     if not profiles:
         raise HTTPException(status_code=500, detail="No printer profiles available")
-    return _normalize_width(profiles[0].width)
+    widest = max(profiles, key=lambda profile: profile.width)
+    return _normalize_width(widest.width)
 
 
 def _resolve_font_path(text_font_key: str | None, text_font_path: str | None) -> str | None:
@@ -240,22 +240,9 @@ def index() -> str:
         .hero {
             display: flex;
             justify-content: space-between;
-            align-items: flex-start;
+            align-items: center;
             gap: 16px;
             margin-bottom: 20px;
-        }
-        .hero-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 12px;
-            border-radius: 999px;
-            background: rgba(20, 115, 230, 0.1);
-            color: var(--primary-strong);
-            font-size: 12px;
-            font-weight: 700;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
         }
         .section { margin-top: 18px; }
         .section:first-child { margin-top: 0; }
@@ -296,12 +283,32 @@ def index() -> str:
         }
         button:hover { transform: translateY(-1px); filter: brightness(1.01); }
         button:active { transform: translateY(0); }
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+            filter: saturate(0.7);
+            transform: none;
+            box-shadow: none;
+        }
 
         .device-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; align-items: center; }
+        .device-row select { margin-bottom: 0; }
         .device-row button { width: auto; margin-bottom: 0; }
         .connect-indicator { width: 20px; height: 20px; border: 2.5px solid #d3dbe4; border-top-color: #0a84ff; border-radius: 50%; opacity: 0; transition: opacity 0.2s ease; }
         .connect-indicator.is-active { opacity: 1; animation: spin 0.8s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        /* Busy overlay */
+        #busyOverlay { position: fixed; inset: 0; z-index: 9999; background: rgba(180,195,210,0.25); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+        #busyOverlay.is-active { opacity: 1; pointer-events: all; }
+        #busyOverlay.is-force-hidden { opacity: 0; pointer-events: none; }
+        .busy-card { display: flex; flex-direction: column; align-items: center; gap: 14px; background: rgba(255,255,255,0.92); border: 1px solid var(--line); border-radius: 18px; padding: 28px 36px; box-shadow: 0 8px 32px rgba(20,48,80,0.13); }
+        .busy-spinner { width: 36px; height: 36px; border: 3.5px solid #d3dbe4; border-top-color: #0a84ff; border-radius: 50%; animation: spin 0.9s linear infinite; }
+        #busyMessage { color: #13273e; font-size: 14px; font-weight: 600; }
+        .busy-actions { display: flex; gap: 10px; }
+        .busy-action { width: auto; margin: 0; min-height: 34px; padding: 6px 14px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+        #busyHideBtn { background: #eef3f8; color: #37516b; border: 1px solid #d3deea; }
+        #busyCancelBtn { background: #fff1f0; color: #b42318; border: 1px solid #f7c8c4; }
+        .busy-action.is-hidden { display: none; }
 
         .slider-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
         .slider-hint { font-size: 12px; color: #5f6b77; }
@@ -336,9 +343,62 @@ def index() -> str:
         .overlay-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
         .overlay-footer button { width: auto; margin-bottom: 0; }
         #fontSizeOverlay { min-width: 260px; }
-        #fontOverlay { left: calc(100% + 12px); top: 46px; min-width: 320px; width: 336px; max-height: 430px; overflow-y: auto; }
+        #fontOverlay { left: calc(100% + 12px); top: calc(100% + 10px); min-width: 420px; width: 420px; max-height: 430px; overflow-y: auto; overflow-x: hidden; }
 
-        #status { white-space: pre-wrap; font-family: "WebFontIBMPlexMono", monospace; background: #f5f9fd; padding: 14px; border-radius: 16px; border: 1px solid var(--line); }
+        .status-hub { position: relative; display: flex; align-items: center; justify-content: flex-end; }
+        #statusHistoryBtn {
+            width: 34px;
+            min-height: 34px;
+            margin: 0;
+            padding: 0;
+            border-radius: 50%;
+            font-size: 16px;
+            line-height: 1;
+            background: linear-gradient(180deg, #e6f1ff, #cfe2ff);
+            color: var(--primary-strong);
+        }
+        .status-history-panel {
+            position: absolute;
+            right: 0;
+            top: calc(100% + 10px);
+            z-index: 220;
+            width: 280px;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: rgba(255,255,255,0.98);
+            box-shadow: 0 18px 36px rgba(19, 39, 62, 0.18);
+            padding: 10px 12px;
+        }
+        .status-history-panel.is-hidden { display: none; }
+        .status-history-title { font-size: 12px; font-weight: 700; color: #3d4a58; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.03em; }
+        .status-history-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+        .status-history-list li { font-size: 12px; color: #334a60; background: #f4f8fd; border: 1px solid #dbe7f3; border-radius: 10px; padding: 6px 8px; }
+
+        .status-toast {
+            position: fixed;
+            top: 14px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-10px);
+            opacity: 0;
+            pointer-events: none;
+            z-index: 300;
+            background: rgba(15, 34, 56, 0.94);
+            color: #f5f8fc;
+            border-radius: 12px;
+            padding: 8px 12px;
+            font-size: 13px;
+            box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
+            transition: opacity 0.18s ease, transform 0.18s ease;
+            max-width: min(90vw, 620px);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .status-toast.is-visible {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
         #connectionState { font-size: 12px; color: #4d5966; margin-top: 2px; }
         #connectionState.is-scanning { color: #0a84ff; }
         #connectionState.is-connected { color: #117a37; font-weight: 600; }
@@ -364,20 +424,39 @@ def index() -> str:
             #previewFrame { width: 100%; min-width: 0; }
             .preview-side-actions { width: 100%; min-width: 0; flex-direction: row; }
             .preview-side-actions button { flex: 1; }
-            #fontOverlay { left: 0; top: calc(100% + 10px); min-width: min(320px, calc(100vw - 40px)); width: min(320px, calc(100vw - 40px)); max-height: none; }
+            #fontOverlay { left: 0; top: calc(100% + 10px); min-width: min(420px, calc(100vw - 40px)); width: min(420px, calc(100vw - 40px)); max-height: none; }
         }
 
     </style>
 </head>
-<body>
+<body>    <div id="busyOverlay">
+        <div class="busy-card">
+            <div class="busy-spinner"></div>
+            <div id="busyMessage">Bitte warten…</div>
+            <div class="busy-actions">
+                <button id="busyHideBtn" type="button" class="busy-action">Hide</button>
+                <button id="busyCancelBtn" type="button" class="busy-action is-hidden">Cancel</button>
+            </div>
+        </div>
+    </div>    <div id=\"statusToast\" class=\"status-toast\" aria-live=\"polite\">
+        <span id=\"statusToastText\">Ready.</span>
+    </div>
   <div class=\"row\">
     <div class=\"card\">
             <div class=\"hero\">
                 <div>
-                    <div class=\"hero-badge\">Progressive Print UI</div>
                     <h1>TiMini Web Print</h1>
                     <p>Fast browser workflow for scan, preview, and label printing.</p>
                 </div>
+                                <div class=\"status-hub\">
+                                        <button id=\"statusHistoryBtn\" type=\"button\" title=\"Show recent status messages\">i</button>
+                                        <div id=\"statusHistoryPanel\" class=\"status-history-panel is-hidden\">
+                                                <div class=\"status-history-title\">Recent Status</div>
+                                                <ul id=\"statusHistoryList\" class=\"status-history-list\">
+                                                        <li>Ready.</li>
+                                                </ul>
+                                        </div>
+                                </div>
             </div>
             <div class=\"section section-card\">
                 <label for=\"deviceSelect\">Printer</label>
@@ -391,8 +470,13 @@ def index() -> str:
             </div>
 
             <div class=\"section section-card\">
-                <label for=\"text\">Label text</label>
-                <textarea id=\"text\">ABCDEFGHIJKLMNOPQRSTUVWXYZ</textarea>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                    <label for="text" style="margin-bottom:0;">Label text</label>
+                    <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#6a7d90;cursor:pointer;margin-bottom:0;">
+                        <input type="checkbox" id="syncFontToggle" checked style="width:auto;margin-bottom:0;"> auto-fill
+                    </label>
+                </div>
+                <textarea id="text" rows="10">ABCDEFGHIJKLMNOPQRSTUVWXYZ</textarea>
             </div>
 
             <div class=\"section section-card\">
@@ -438,13 +522,8 @@ def index() -> str:
             <div class=\"section section-card\">
                 <label for=\"darkness\">Darkness</label>
                 <input id=\"darkness\" type=\"number\" min=\"1\" max=\"5\" value=\"3\" />
-                <label class=\"checkbox-row\"><input id=\"hardWrap\" type=\"checkbox\" /> Hard wrap text</label>
             </div>
 
-            <div class=\"section section-card\">
-                <h3>Status</h3>
-                <div id=\"status\">Ready.</div>
-      </div>
     </div>
   </div>
 
@@ -560,7 +639,7 @@ def preview(request: PreviewRequest) -> dict[str, object]:
     converter = TextConverter(
         font_path=font_path,
         columns=request.text_columns,
-        wrap_lines=not request.text_hard_wrap,
+        wrap_lines=True,
     )
     with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as handle:
         handle.write(request.text)
@@ -592,7 +671,6 @@ def _build_args(request: PrintRequest) -> argparse.Namespace:
         text=request.text,
         text_font=text_font,
         text_columns=request.text_columns,
-        text_hard_wrap=request.text_hard_wrap,
         pdf_pages=None,
         pdf_page_gap=5,
         trim_side_margins=True,
@@ -606,9 +684,32 @@ def _build_args(request: PrintRequest) -> argparse.Namespace:
     )
 
 
+def _decode_data_url(data_url: str) -> bytes:
+    payload = data_url
+    if "," in data_url:
+        payload = data_url.split(",", 1)[1]
+    try:
+        return base64.b64decode(payload, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid image_data payload") from exc
+
+
 @app.post("/api/print")
 async def print_label(request: PrintRequest) -> dict[str, str]:
+    if not request.image_data and not request.text.strip():
+        raise HTTPException(status_code=400, detail="Missing text or image_data")
+
     args = _build_args(request)
+    temp_image: Path | None = None
+    if request.image_data:
+        raw = _decode_data_url(request.image_data)
+        with tempfile.NamedTemporaryFile("wb", suffix=".png", delete=False) as handle:
+            handle.write(raw)
+            temp_image = Path(handle.name)
+        args.path = str(temp_image)
+        args.text = None
+        args.force_image_mode = True
+
     try:
         if args.serial:
             code = await asyncio.to_thread(cli_app.print_serial, args)
@@ -618,7 +719,11 @@ async def print_label(request: PrintRequest) -> dict[str, str]:
     except Exception as exc:
         logger.exception("Unexpected error while handling /api/print request", exc_info=exc)
         raise HTTPException(status_code=500, detail="PRINT_UNEXPECTED_ERROR") from exc
+    finally:
+        if temp_image is not None:
+            temp_image.unlink(missing_ok=True)
 
     if code != 0:
         raise HTTPException(status_code=500, detail=f"Print failed with exit code {code}")
     return {"message": "Print job sent."}
+

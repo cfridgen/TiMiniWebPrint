@@ -286,7 +286,7 @@ def _resolve_text_columns(args: argparse.Namespace) -> Optional[int]:
 
 
 def _resolve_text_wrap(args: argparse.Namespace) -> bool:
-    return not args.text_hard_wrap
+    return not getattr(args, "text_hard_wrap", False)
 
 
 def _resolve_pdf_pages(args: argparse.Namespace) -> Optional[str]:
