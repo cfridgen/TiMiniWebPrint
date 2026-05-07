@@ -1,0 +1,18 @@
+services:
+  timiniprint:
+    image: ghcr.io/cfridgen/timiniwebprint:latest
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      # Bluetooth / DBus
+      DBUS_SYSTEM_BUS_ADDRESS: "unix:path=/run/dbus/system_bus_socket"
+      # node_exporter (set to 0 to disable)
+      NODE_EXPORTER_ENABLED: "1"
+      NODE_EXPORTER_ARGS: "--collector.disable-defaults --collector.cpu --collector.meminfo --collector.filesystem"
+    volumes:
+      # Share host DBus socket so bluetoothctl / bleak can reach bluetoothd
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+    cap_add:
+      - NET_ADMIN   # needed for BLE socket creation
+      - NET_RAW     # needed for BLE/Bluetooth raw sockets
