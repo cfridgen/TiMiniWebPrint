@@ -162,7 +162,7 @@ async def log_http_requests(request, call_next):
         response.status_code,
         duration_ms,
     )
-    if request.url.path != "/api/preview" or response.status_code >= 400:
+    if response.status_code >= 400:
         _debug_event(
             "http",
             "HTTP request",
