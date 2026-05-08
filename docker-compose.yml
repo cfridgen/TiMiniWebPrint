@@ -3,6 +3,7 @@ services:
     image: ghcr.io/cfridgen/timiniwebprint:latest
     pull_policy: always
     restart: unless-stopped
+    privileged: true
     ports:
       - "8001:8000"
     environment:
