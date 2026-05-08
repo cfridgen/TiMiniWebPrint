@@ -556,6 +556,9 @@ async function loadProfiles() {
     updateConnectButtonState();
     setConnectionState('Auto-connecting first detected printer...', 'is-scanning');
     await connectSelected(true);
+    if (!connectedTarget) {
+      setConnectionState('Printer detected. Auto-connect failed, please click Connect.', 'is-error');
+    }
   } catch (err) {
     log(`Scan failed: ${err}`);
     setConnectionState('Scan failed.', 'is-error');
@@ -595,6 +598,7 @@ async function connectSelected(autoConnect = false) {
     }
     return;
   }
+  setConnectionState(autoConnect ? 'Auto-connecting first detected printer...' : 'Connecting selected printer...', 'is-scanning');
   setConnecting(true);
   log(autoConnect ? 'Auto-connecting...' : 'Connecting...');
   try {
