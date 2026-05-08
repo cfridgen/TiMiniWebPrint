@@ -1,6 +1,7 @@
 services:
   timiniprint:
-    image: ghcr.io/cfridgen/timiniwebprint:latest
+    image: ghcr.io/cfridgen/timiniwebprint:sha-c4aea8e
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "8001:8000"
@@ -11,8 +12,11 @@ services:
       NODE_EXPORTER_ENABLED: "1"
       NODE_EXPORTER_ARGS: "--collector.disable-defaults --collector.cpu --collector.meminfo --collector.filesystem"
     volumes:
-      # Share host DBus socket so bluetoothctl / bleak can reach bluetoothd
-      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      # Share host DBus so bluetoothctl / bleak can reach host bluetoothd
+      - /run/dbus:/run/dbus
+      - /var/run/dbus:/var/run/dbus
+      # Optional but useful for BlueZ adapter visibility in some setups
+      - /run/udev:/run/udev:ro
     cap_add:
       - NET_ADMIN   # needed for BLE socket creation
       - NET_RAW     # needed for BLE/Bluetooth raw sockets
