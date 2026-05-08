@@ -1,6 +1,6 @@
 services:
   timiniprint:
-    image: ghcr.io/cfridgen/timiniwebprint:sha-c4aea8e
+    image: ghcr.io/cfridgen/timiniwebprint:latest
     pull_policy: always
     restart: unless-stopped
     ports:
