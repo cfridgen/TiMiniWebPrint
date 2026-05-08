@@ -442,13 +442,12 @@ def index() -> str:
         .status-history-title { font-size: 12px; font-weight: 700; color: #3d4a58; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.03em; }
         .status-history-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
         .status-history-list li { font-size: 12px; color: #334a60; background: #f4f8fd; border: 1px solid #dbe7f3; border-radius: 10px; padding: 6px 8px; }
+        .debug-log-section { margin-top: 0; margin-bottom: 14px; }
         .debug-log-panel {
-            position: fixed;
-            left: 50%;
-            top: 8px;
-            transform: translateX(-50%);
-            z-index: 520;
-            width: min(96vw, 1120px);
+            position: static;
+            transform: none;
+            z-index: auto;
+            width: 100%;
             border: 1px solid var(--line);
             border-radius: 16px;
             background: rgba(255,255,255,0.98);
@@ -560,20 +559,22 @@ def index() -> str:
                                                         <li>Ready.</li>
                                                 </ul>
                                         </div>
-                                    <div id=\"debugLogPanel\" class=\"debug-log-panel\">
-                                        <div class=\"debug-log-head\">
-                                            <div class=\"status-history-title\">Runtime Debug Log</div>
-                                            <div class=\"debug-log-actions\">
-                                                <button id=\"debugRefreshBtn\" type=\"button\">Refresh</button>
-                                                <button id=\"debugClearBtn\" type=\"button\">Clear</button>
-                                            </div>
-                                        </div>
-                                        <div id=\"debugLogMeta\">No debug entries yet.</div>
-                                        <ul id=\"debugLogList\" class=\"debug-log-list\">
-                                            <li>Debug panel hidden by default.</li>
-                                        </ul>
-                                    </div>
                                 </div>
+            </div>
+            <div class=\"section section-card debug-log-section\">
+                <div id=\"debugLogPanel\" class=\"debug-log-panel\">
+                    <div class=\"debug-log-head\">
+                        <div class=\"status-history-title\">Runtime Debug Log</div>
+                        <div class=\"debug-log-actions\">
+                            <button id=\"debugRefreshBtn\" type=\"button\">Refresh</button>
+                            <button id=\"debugClearBtn\" type=\"button\">Clear</button>
+                        </div>
+                    </div>
+                    <div id=\"debugLogMeta\">No debug entries yet.</div>
+                    <ul id=\"debugLogList\" class=\"debug-log-list\">
+                        <li>Debug panel hidden by default.</li>
+                    </ul>
+                </div>
             </div>
             <div class=\"section section-card\">
                 <label for=\"deviceSelect\">Printer</label>
