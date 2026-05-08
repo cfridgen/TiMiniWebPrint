@@ -17,6 +17,7 @@ let printAbortController = null;
 let debugEntries = [];
 let clientDebugEntries = [];
 let debugPollTimer = null;
+let debugRenderedText = '';
 
 function nowIso() {
   return new Date().toISOString();
@@ -75,32 +76,49 @@ function formatDebugEntry(entry) {
   return context ? `${ts} [${kind}] ${message}\n${context}` : `${ts} [${kind}] ${message}`;
 }
 
-function renderDebugPanel() {
-  const list = $('debugLogList');
+function renderDebugPanel(force = false) {
+  const textField = $('debugLogText');
   const meta = $('debugLogMeta');
-  if (!list || !meta) {
+  if (!textField || !meta) {
     return;
   }
-  list.innerHTML = '';
   const mergedEntries = [...debugEntries, ...clientDebugEntries]
     .sort((left, right) => String(left.ts || '').localeCompare(String(right.ts || '')));
 
+  const latest = mergedEntries.length > 0 ? mergedEntries[mergedEntries.length - 1] : null;
+  const nextText = mergedEntries.length > 0
+    ? mergedEntries.map((entry) => formatDebugEntry(entry)).join('\n\n')
+    : 'No debug entries yet.';
+
+  const hasSelection = textField.selectionStart !== textField.selectionEnd;
+  const isFocused = document.activeElement === textField;
+  const preserveSelection = !force && isFocused && hasSelection;
+
+  if (preserveSelection && nextText !== debugRenderedText) {
+    meta.textContent = `${mergedEntries.length} entries (latest: ${latest && latest.ts ? latest.ts : 'n/a'}, paused while selecting)`;
+    return;
+  }
+
   if (mergedEntries.length === 0) {
-    const item = document.createElement('li');
-    item.textContent = 'No debug entries yet.';
-    list.appendChild(item);
+    debugRenderedText = nextText;
+    textField.value = nextText;
     meta.textContent = 'No debug entries.';
     return;
   }
 
-  const latest = mergedEntries[mergedEntries.length - 1];
   meta.textContent = `${mergedEntries.length} entries (latest: ${latest.ts || 'n/a'})`;
 
-  [...mergedEntries].reverse().forEach((entry) => {
-    const item = document.createElement('li');
-    item.textContent = formatDebugEntry(entry);
-    list.appendChild(item);
-  });
+  if (nextText !== debugRenderedText) {
+    const oldScrollTop = textField.scrollTop;
+    const wasNearBottom = (textField.scrollHeight - textField.clientHeight - textField.scrollTop) < 12;
+    debugRenderedText = nextText;
+    textField.value = nextText;
+    if (wasNearBottom) {
+      textField.scrollTop = textField.scrollHeight;
+    } else {
+      textField.scrollTop = oldScrollTop;
+    }
+  }
 }
 
 async function refreshDebugLog(showErrors = true) {

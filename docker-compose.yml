@@ -20,3 +20,5 @@ services:
     cap_add:
       - NET_ADMIN   # needed for BLE socket creation
       - NET_RAW     # needed for BLE/Bluetooth raw sockets
+    security_opt:
+      - seccomp=unconfined  # allow AF_BLUETOOTH RFCOMM sockets in container

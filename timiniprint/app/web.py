@@ -462,8 +462,13 @@ def index() -> str:
         #debugRefreshBtn { background: linear-gradient(180deg, #eef4fb, #dfeaf6); }
         #debugClearBtn { background: linear-gradient(180deg, #fff2f1, #ffe2df); color: #a12a1f; }
         #debugLogMeta { margin-bottom: 8px; font-size: 12px; color: #5a6e82; }
-        .debug-log-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 58vh; overflow: auto; }
-        .debug-log-list li {
+        .debug-log-text {
+            width: 100%;
+            margin: 0;
+            min-height: 300px;
+            max-height: 58vh;
+            resize: vertical;
+            overflow: auto;
             font-family: "WebFontRobotoMono", "WebFontIBMPlexMono", monospace;
             font-size: 12px;
             line-height: 1.35;
@@ -472,8 +477,8 @@ def index() -> str:
             border: 1px solid #dbe7f3;
             border-radius: 10px;
             padding: 7px 8px;
-            white-space: pre-wrap;
-            word-break: break-word;
+            white-space: pre;
+            word-break: normal;
         }
 
         .status-toast {
@@ -571,9 +576,7 @@ def index() -> str:
                         </div>
                     </div>
                     <div id=\"debugLogMeta\">No debug entries yet.</div>
-                    <ul id=\"debugLogList\" class=\"debug-log-list\">
-                        <li>Debug panel hidden by default.</li>
-                    </ul>
+                    <textarea id="debugLogText" class="debug-log-text" readonly spellcheck="false">No debug entries yet.</textarea>
                 </div>
             </div>
             <div class=\"section section-card\">
@@ -780,9 +783,14 @@ async def connect(request: ConnectRequest) -> dict[str, str]:
         connector = BleakBluetoothConnector(reporter=reporter)
         connection = await connector.connect(device)
         await connection.disconnect()
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        _debug_event("error", "Connect failed", target=request.target, error=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         _debug_event("error", "Connect failed", target=request.target, error=str(exc))
-        raise
+        raise HTTPException(status_code=500, detail="Unexpected connection error") from exc
 
     _active_printer = {
         "target": device.address,

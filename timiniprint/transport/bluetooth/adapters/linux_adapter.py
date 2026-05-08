@@ -29,7 +29,17 @@ class _LinuxClassicAdapter(_ClassicBluetoothAdapter):
                 "RFCOMM sockets are not supported on this system. Use --serial or run on Linux."
             )
         _ = protocol_family
-        return socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+        try:
+            return socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+        except OSError as exc:
+            # Docker's default seccomp profile may block AF_BLUETOOTH socket creation.
+            if exc.errno == 97:
+                raise RuntimeError(
+                    "RFCOMM socket creation failed ([Errno 97] Address family not supported by protocol). "
+                    "Inside Docker this is commonly caused by a restrictive seccomp profile. "
+                    "Set 'security_opt: [seccomp=unconfined]' (or run privileged) and redeploy."
+                ) from exc
+            raise
 
     def resolve_rfcomm_channels(self, address: str) -> List[int]:
         return self._commands.resolve_rfcomm_channels(address)
