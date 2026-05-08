@@ -36,8 +36,9 @@ class _LinuxClassicAdapter(_ClassicBluetoothAdapter):
             if exc.errno == 97:
                 raise RuntimeError(
                     "RFCOMM socket creation failed ([Errno 97] Address family not supported by protocol). "
-                    "Inside Docker this is commonly caused by a restrictive seccomp profile. "
-                    "Set 'security_opt: [seccomp=unconfined]' (or run privileged) and redeploy."
+                    "Inside Docker this is commonly caused by a restrictive seccomp profile or missing "
+                    "Bluetooth RFCOMM kernel support on the host. "
+                    "Set 'security_opt: [seccomp=unconfined]' (or run privileged), and verify host RFCOMM support."
                 ) from exc
             raise
 

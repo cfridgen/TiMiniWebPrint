@@ -6,7 +6,7 @@ import time
 from typing import List, Optional, Tuple
 
 from .adapters import _get_ble_adapter, _get_classic_adapter
-from .constants import IS_MACOS, IS_WINDOWS, RFCOMM_CHANNELS
+from .constants import IS_LINUX, IS_MACOS, IS_WINDOWS, RFCOMM_CHANNELS
 from .types import DeviceInfo, DeviceTransport, ScanFailure, SocketLike
 from ... import reporting
 
@@ -108,7 +108,7 @@ class SppBackend:
 
         for index, candidate in enumerate(unique_attempts):
             if (
-                IS_MACOS
+                (IS_MACOS or IS_LINUX)
                 and index > 0
                 and candidate.transport == DeviceTransport.BLE
                 and unique_attempts[index - 1].transport == DeviceTransport.CLASSIC
