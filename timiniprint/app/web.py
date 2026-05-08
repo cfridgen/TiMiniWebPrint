@@ -111,7 +111,7 @@ _NOISY_HTTP_PATHS = {"/api/debug/logs"}
 class _SuppressUvicornAccessPathFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
-        return all(f'"{path} ' not in message for path in _NOISY_HTTP_PATHS)
+        return all(path not in message for path in _NOISY_HTTP_PATHS)
 
 
 _uvicorn_access_logger = logging.getLogger("uvicorn.access")
