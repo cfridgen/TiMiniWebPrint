@@ -410,14 +410,7 @@ def index() -> str:
             color: var(--primary-strong);
         }
         #debugLogBtn {
-            width: auto;
-            min-height: 34px;
-            margin: 0;
-            padding: 0 12px;
-            border-radius: 10px;
-            font-size: 12px;
-            background: linear-gradient(180deg, #edf7f2, #d9efe3);
-            color: #0b6e47;
+            display: none;
         }
         .status-history-panel {
             position: absolute;
@@ -436,16 +429,17 @@ def index() -> str:
         .status-history-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
         .status-history-list li { font-size: 12px; color: #334a60; background: #f4f8fd; border: 1px solid #dbe7f3; border-radius: 10px; padding: 6px 8px; }
         .debug-log-panel {
-            position: absolute;
-            right: 0;
-            top: calc(100% + 10px);
-            z-index: 230;
-            width: min(92vw, 620px);
+            position: fixed;
+            left: 50%;
+            top: 8px;
+            transform: translateX(-50%);
+            z-index: 520;
+            width: min(96vw, 1120px);
             border: 1px solid var(--line);
             border-radius: 16px;
             background: rgba(255,255,255,0.98);
             box-shadow: 0 18px 36px rgba(19, 39, 62, 0.18);
-            padding: 10px 12px;
+            padding: 12px 14px;
         }
         .debug-log-panel.is-hidden { display: none; }
         .debug-log-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
@@ -455,10 +449,10 @@ def index() -> str:
         #debugRefreshBtn { background: linear-gradient(180deg, #eef4fb, #dfeaf6); }
         #debugClearBtn { background: linear-gradient(180deg, #fff2f1, #ffe2df); color: #a12a1f; }
         #debugLogMeta { margin-bottom: 8px; font-size: 12px; color: #5a6e82; }
-        .debug-log-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 42vh; overflow: auto; }
+        .debug-log-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 58vh; overflow: auto; }
         .debug-log-list li {
             font-family: "WebFontRobotoMono", "WebFontIBMPlexMono", monospace;
-            font-size: 11px;
+            font-size: 12px;
             line-height: 1.35;
             color: #17324c;
             background: #f6faff;
@@ -552,7 +546,7 @@ def index() -> str:
                                                         <li>Ready.</li>
                                                 </ul>
                                         </div>
-                                    <div id=\"debugLogPanel\" class=\"debug-log-panel is-hidden\">
+                                    <div id=\"debugLogPanel\" class=\"debug-log-panel\">
                                         <div class=\"debug-log-head\">
                                             <div class=\"status-history-title\">Runtime Debug Log</div>
                                             <div class=\"debug-log-actions\">

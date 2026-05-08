@@ -130,7 +130,7 @@ async function setDebugPanelVisible(visible) {
   stopDebugPolling();
   debugPollTimer = setInterval(() => {
     refreshDebugLog(false).catch(() => {});
-  }, 3000);
+  }, 1200);
 }
 
 function updateConnectButtonState() {
@@ -658,12 +658,6 @@ document.addEventListener('click', (e) => {
       !shp.contains(e.target) && e.target !== shb) {
     shp.classList.add('is-hidden');
   }
-  const dlp = $('debugLogPanel');
-  const dlb = $('debugLogBtn');
-  if (dlp && !dlp.classList.contains('is-hidden') &&
-      !dlp.contains(e.target) && e.target !== dlb) {
-    setDebugPanelVisible(false).catch((err) => log(`Debug panel failed: ${err}`));
-  }
 });
 
 async function renderPreview(manual = false) {
@@ -781,7 +775,6 @@ $('deviceSelect').addEventListener('change', () => {
 
 $('statusHistoryBtn').addEventListener('click', (e) => {
   e.stopPropagation();
-  setDebugPanelVisible(false).catch((err) => log(`Debug panel failed: ${err}`));
   $('statusHistoryPanel').classList.toggle('is-hidden');
 });
 
@@ -827,6 +820,7 @@ window.addEventListener('resize', () => {
 
 async function init() {
   updateColumnsLabel();
+  await setDebugPanelVisible(true);
   await loadFonts();
   await loadProfiles();
   updateConnectButtonState();
