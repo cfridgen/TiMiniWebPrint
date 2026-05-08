@@ -471,6 +471,12 @@ async function loadProfiles() {
     if (Array.isArray(data.failures) && data.failures.length > 0) {
       data.failures.forEach((failure) => {
         log(`Scan warning [${failure.transport}]: ${failure.error}`);
+        if (failure.hint) {
+          log(`Scan hint [${failure.transport}]: ${failure.hint}`);
+        }
+        if (failure.details) {
+          log(`Scan details [${failure.transport}]: ${JSON.stringify(failure.details)}`);
+        }
       });
     }
 

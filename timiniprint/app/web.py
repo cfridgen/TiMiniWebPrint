@@ -5,6 +5,8 @@ import asyncio
 import base64
 import io
 import logging
+import os
+import shutil
 import tempfile
 import time
 from collections import deque
@@ -118,6 +120,22 @@ def _debug_event(kind: str, message: str, **context: object) -> None:
     if context:
         entry["context"] = context
     _debug_events.append(entry)
+
+
+def _ble_runtime_diagnostics() -> dict[str, object]:
+    dbus_addr = os.environ.get("DBUS_SYSTEM_BUS_ADDRESS", "")
+    expected_socket = dbus_addr.removeprefix("unix:path=") if dbus_addr.startswith("unix:path=") else ""
+    candidate_sockets = [
+        "/run/dbus/system_bus_socket",
+        "/var/run/dbus/system_bus_socket",
+    ]
+    return {
+        "dbus_system_bus_address": dbus_addr,
+        "expected_socket": expected_socket,
+        "expected_socket_exists": bool(expected_socket and os.path.exists(expected_socket)),
+        "candidate_socket_exists": {path: os.path.exists(path) for path in candidate_sockets},
+        "bluetoothctl_found": bool(shutil.which("bluetoothctl")),
+    }
 
 
 @app.middleware("http")
@@ -691,9 +709,30 @@ async def scan() -> dict[str, object]:
     discovery = BluetoothDiscovery(catalog)
     _debug_event("scan", "Scan started", has_active_printer=bool(active_target))
     result = await discovery.scan_report(include_classic=True, include_ble=True)
+    failure_payloads: list[dict[str, object]] = []
     if result.failures:
         for failure in result.failures:
-            _debug_event("warning", "Scan transport failed", transport=failure.transport.value, error=str(failure.error))
+            payload: dict[str, object] = {
+                "transport": failure.transport.value,
+                "error": str(failure.error),
+            }
+            if failure.transport.value == "ble":
+                diagnostics = _ble_runtime_diagnostics()
+                payload["details"] = diagnostics
+                payload["hint"] = (
+                    "BLE needs host DBus socket mount and a valid DBUS_SYSTEM_BUS_ADDRESS "
+                    "inside the container."
+                )
+                _debug_event(
+                    "warning",
+                    "Scan transport failed",
+                    transport=failure.transport.value,
+                    error=str(failure.error),
+                    diagnostics=diagnostics,
+                )
+            else:
+                _debug_event("warning", "Scan transport failed", transport=failure.transport.value, error=str(failure.error))
+            failure_payloads.append(payload)
     _debug_event(
         "scan",
         "Scan finished",
@@ -714,11 +753,7 @@ async def scan() -> dict[str, object]:
         ],
         "active_printer": _active_printer,
         "failures": [
-            {
-                "transport": failure.transport.value,
-                "error": str(failure.error),
-            }
-            for failure in result.failures
+            item for item in failure_payloads
         ],
     }
 

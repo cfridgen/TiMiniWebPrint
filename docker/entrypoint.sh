@@ -5,6 +5,12 @@ set -eu
 DBUS_SYSTEM_BUS_ADDRESS="${DBUS_SYSTEM_BUS_ADDRESS:-unix:path=/run/dbus/system_bus_socket}"
 export DBUS_SYSTEM_BUS_ADDRESS
 _dbus_socket="${DBUS_SYSTEM_BUS_ADDRESS#unix:path=}"
+if [ ! -S "${_dbus_socket}" ] && [ -S "/var/run/dbus/system_bus_socket" ]; then
+  DBUS_SYSTEM_BUS_ADDRESS="unix:path=/var/run/dbus/system_bus_socket"
+  export DBUS_SYSTEM_BUS_ADDRESS
+  _dbus_socket="/var/run/dbus/system_bus_socket"
+  echo "INFO: Using fallback DBus socket '${_dbus_socket}'." >&2
+fi
 if [ ! -S "${_dbus_socket}" ]; then
   echo "WARNING: DBus socket '${_dbus_socket}' not found – Bluetooth scan will not work." >&2
 fi
