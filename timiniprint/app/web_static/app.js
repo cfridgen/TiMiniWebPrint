@@ -14,6 +14,8 @@ let statusHistory = ['Ready.'];
 let busyLockCount = 0;
 let isPrinting = false;
 let printAbortController = null;
+let debugEntries = [];
+let debugPollTimer = null;
 
 function log(msg) {
   const text = String(msg || '');
@@ -45,6 +47,90 @@ function log(msg) {
       list.appendChild(item);
     });
   }
+}
+
+function formatDebugEntry(entry) {
+  const ts = entry && entry.ts ? String(entry.ts) : '';
+  const kind = entry && entry.kind ? String(entry.kind).toUpperCase() : 'INFO';
+  const message = entry && entry.message ? String(entry.message) : '';
+  const context = entry && entry.context ? JSON.stringify(entry.context) : '';
+  return context ? `${ts} [${kind}] ${message}\n${context}` : `${ts} [${kind}] ${message}`;
+}
+
+function renderDebugPanel() {
+  const list = $('debugLogList');
+  const meta = $('debugLogMeta');
+  if (!list || !meta) {
+    return;
+  }
+  list.innerHTML = '';
+  if (!Array.isArray(debugEntries) || debugEntries.length === 0) {
+    const item = document.createElement('li');
+    item.textContent = 'No debug entries yet.';
+    list.appendChild(item);
+    meta.textContent = 'No debug entries.';
+    return;
+  }
+
+  const latest = debugEntries[debugEntries.length - 1];
+  meta.textContent = `${debugEntries.length} entries (latest: ${latest.ts || 'n/a'})`;
+
+  [...debugEntries].reverse().forEach((entry) => {
+    const item = document.createElement('li');
+    item.textContent = formatDebugEntry(entry);
+    list.appendChild(item);
+  });
+}
+
+async function refreshDebugLog(showErrors = true) {
+  try {
+    const res = await fetch('/api/debug/logs?limit=160');
+    const data = await parseJsonOrLog(res, 'Debug log failed');
+    if (!data) {
+      return;
+    }
+    if (!res.ok) {
+      if (showErrors) {
+        log(`Debug log failed: ${JSON.stringify(data)}`);
+      }
+      return;
+    }
+    debugEntries = Array.isArray(data.entries) ? data.entries : [];
+    renderDebugPanel();
+  } catch (err) {
+    if (showErrors) {
+      log(`Debug log failed: ${err}`);
+    }
+  }
+}
+
+function stopDebugPolling() {
+  if (debugPollTimer) {
+    clearInterval(debugPollTimer);
+    debugPollTimer = null;
+  }
+}
+
+async function setDebugPanelVisible(visible) {
+  const panel = $('debugLogPanel');
+  const statusPanel = $('statusHistoryPanel');
+  if (!panel) {
+    return;
+  }
+  panel.classList.toggle('is-hidden', !visible);
+  if (statusPanel && visible) {
+    statusPanel.classList.add('is-hidden');
+  }
+  if (!visible) {
+    stopDebugPolling();
+    return;
+  }
+
+  await refreshDebugLog(false);
+  stopDebugPolling();
+  debugPollTimer = setInterval(() => {
+    refreshDebugLog(false).catch(() => {});
+  }, 3000);
 }
 
 function updateConnectButtonState() {
@@ -566,6 +652,12 @@ document.addEventListener('click', (e) => {
       !shp.contains(e.target) && e.target !== shb) {
     shp.classList.add('is-hidden');
   }
+  const dlp = $('debugLogPanel');
+  const dlb = $('debugLogBtn');
+  if (dlp && !dlp.classList.contains('is-hidden') &&
+      !dlp.contains(e.target) && e.target !== dlb) {
+    setDebugPanelVisible(false).catch((err) => log(`Debug panel failed: ${err}`));
+  }
 });
 
 async function renderPreview(manual = false) {
@@ -683,7 +775,44 @@ $('deviceSelect').addEventListener('change', () => {
 
 $('statusHistoryBtn').addEventListener('click', (e) => {
   e.stopPropagation();
+  setDebugPanelVisible(false).catch((err) => log(`Debug panel failed: ${err}`));
   $('statusHistoryPanel').classList.toggle('is-hidden');
+});
+
+$('debugLogBtn').addEventListener('click', async (e) => {
+  e.stopPropagation();
+  $('statusHistoryPanel').classList.add('is-hidden');
+  const panel = $('debugLogPanel');
+  const visible = panel.classList.contains('is-hidden');
+  await setDebugPanelVisible(visible);
+});
+
+$('debugRefreshBtn').addEventListener('click', async (e) => {
+  e.stopPropagation();
+  await refreshDebugLog(true);
+});
+
+$('debugClearBtn').addEventListener('click', async (e) => {
+  e.stopPropagation();
+  try {
+    const res = await fetch('/api/debug/clear', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({}),
+    });
+    const data = await parseJsonOrLog(res, 'Debug clear failed');
+    if (!data) {
+      return;
+    }
+    if (!res.ok) {
+      log(`Debug clear failed: ${JSON.stringify(data)}`);
+      return;
+    }
+    log(data.message || 'Debug log cleared.');
+    await refreshDebugLog(false);
+  } catch (err) {
+    log(`Debug clear failed: ${err}`);
+  }
 });
 
 window.addEventListener('resize', () => {

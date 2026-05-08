@@ -7,9 +7,11 @@ import io
 import logging
 import tempfile
 import time
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -100,6 +102,22 @@ DEFAULT_FONT_KEY = "roboto_mono_variable"
 app.mount("/static", StaticFiles(directory=WEB_STATIC_DIR), name="static")
 logger = logging.getLogger("timiniprint.web")
 _active_printer: dict[str, str] | None = None
+_debug_events: deque[dict[str, object]] = deque(maxlen=300)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _debug_event(kind: str, message: str, **context: object) -> None:
+    entry: dict[str, object] = {
+        "ts": _now_iso(),
+        "kind": kind,
+        "message": message,
+    }
+    if context:
+        entry["context"] = context
+    _debug_events.append(entry)
 
 
 @app.middleware("http")
@@ -109,6 +127,13 @@ async def log_http_requests(request, call_next):
         response = await call_next(request)
     except Exception:
         duration_ms = (time.perf_counter() - started) * 1000
+        _debug_event(
+            "error",
+            "Unhandled HTTP exception",
+            method=request.method,
+            path=request.url.path,
+            duration_ms=round(duration_ms, 1),
+        )
         logger.exception("HTTP %s %s -> 500 in %.1fms", request.method, request.url.path, duration_ms)
         raise
     duration_ms = (time.perf_counter() - started) * 1000
@@ -119,6 +144,15 @@ async def log_http_requests(request, call_next):
         response.status_code,
         duration_ms,
     )
+    if request.url.path != "/api/preview" or response.status_code >= 400:
+        _debug_event(
+            "http",
+            "HTTP request",
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+            duration_ms=round(duration_ms, 1),
+        )
     return response
 
 
@@ -345,7 +379,7 @@ def index() -> str:
         #fontSizeOverlay { min-width: 260px; }
         #fontOverlay { left: calc(100% + 12px); top: calc(100% + 10px); min-width: 420px; width: 420px; max-height: 430px; overflow-y: auto; overflow-x: hidden; }
 
-        .status-hub { position: relative; display: flex; align-items: center; justify-content: flex-end; }
+        .status-hub { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
         #statusHistoryBtn {
             width: 34px;
             min-height: 34px;
@@ -356,6 +390,16 @@ def index() -> str:
             line-height: 1;
             background: linear-gradient(180deg, #e6f1ff, #cfe2ff);
             color: var(--primary-strong);
+        }
+        #debugLogBtn {
+            width: auto;
+            min-height: 34px;
+            margin: 0;
+            padding: 0 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            background: linear-gradient(180deg, #edf7f2, #d9efe3);
+            color: #0b6e47;
         }
         .status-history-panel {
             position: absolute;
@@ -373,6 +417,39 @@ def index() -> str:
         .status-history-title { font-size: 12px; font-weight: 700; color: #3d4a58; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.03em; }
         .status-history-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
         .status-history-list li { font-size: 12px; color: #334a60; background: #f4f8fd; border: 1px solid #dbe7f3; border-radius: 10px; padding: 6px 8px; }
+        .debug-log-panel {
+            position: absolute;
+            right: 0;
+            top: calc(100% + 10px);
+            z-index: 230;
+            width: min(92vw, 620px);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: rgba(255,255,255,0.98);
+            box-shadow: 0 18px 36px rgba(19, 39, 62, 0.18);
+            padding: 10px 12px;
+        }
+        .debug-log-panel.is-hidden { display: none; }
+        .debug-log-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+        .debug-log-head .status-history-title { margin-bottom: 0; }
+        .debug-log-actions { display: flex; gap: 6px; }
+        .debug-log-actions button { width: auto; min-height: 30px; margin: 0; border-radius: 10px; padding: 4px 10px; font-size: 12px; }
+        #debugRefreshBtn { background: linear-gradient(180deg, #eef4fb, #dfeaf6); }
+        #debugClearBtn { background: linear-gradient(180deg, #fff2f1, #ffe2df); color: #a12a1f; }
+        #debugLogMeta { margin-bottom: 8px; font-size: 12px; color: #5a6e82; }
+        .debug-log-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 42vh; overflow: auto; }
+        .debug-log-list li {
+            font-family: "WebFontRobotoMono", "WebFontIBMPlexMono", monospace;
+            font-size: 11px;
+            line-height: 1.35;
+            color: #17324c;
+            background: #f6faff;
+            border: 1px solid #dbe7f3;
+            border-radius: 10px;
+            padding: 7px 8px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
 
         .status-toast {
             position: fixed;
@@ -450,12 +527,26 @@ def index() -> str:
                 </div>
                                 <div class=\"status-hub\">
                                         <button id=\"statusHistoryBtn\" type=\"button\" title=\"Show recent status messages\">i</button>
+                                    <button id=\"debugLogBtn\" type=\"button\" title=\"Toggle runtime debug log\">Debug</button>
                                         <div id=\"statusHistoryPanel\" class=\"status-history-panel is-hidden\">
                                                 <div class=\"status-history-title\">Recent Status</div>
                                                 <ul id=\"statusHistoryList\" class=\"status-history-list\">
                                                         <li>Ready.</li>
                                                 </ul>
                                         </div>
+                                    <div id=\"debugLogPanel\" class=\"debug-log-panel is-hidden\">
+                                        <div class=\"debug-log-head\">
+                                            <div class=\"status-history-title\">Runtime Debug Log</div>
+                                            <div class=\"debug-log-actions\">
+                                                <button id=\"debugRefreshBtn\" type=\"button\">Refresh</button>
+                                                <button id=\"debugClearBtn\" type=\"button\">Clear</button>
+                                            </div>
+                                        </div>
+                                        <div id=\"debugLogMeta\">No debug entries yet.</div>
+                                        <ul id=\"debugLogList\" class=\"debug-log-list\">
+                                            <li>Debug panel hidden by default.</li>
+                                        </ul>
+                                    </div>
                                 </div>
             </div>
             <div class=\"section section-card\">
@@ -542,6 +633,22 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/debug/logs")
+def debug_logs(limit: int = Query(default=120, ge=1, le=300)) -> dict[str, object]:
+    entries = list(_debug_events)[-limit:]
+    return {
+        "entries": entries,
+        "count": len(entries),
+    }
+
+
+@app.post("/api/debug/clear")
+def clear_debug_logs() -> dict[str, str]:
+    _debug_events.clear()
+    _debug_event("system", "Debug log cleared")
+    return {"message": "Debug log cleared."}
+
+
 @app.get("/api/profiles")
 def profiles() -> dict[str, list[dict[str, object]]]:
     catalog = PrinterCatalog.load()
@@ -582,7 +689,17 @@ async def scan() -> dict[str, object]:
     active_target = _active_printer["target"] if _active_printer else None
     catalog = PrinterCatalog.load()
     discovery = BluetoothDiscovery(catalog)
+    _debug_event("scan", "Scan started", has_active_printer=bool(active_target))
     result = await discovery.scan_report(include_classic=True, include_ble=True)
+    if result.failures:
+        for failure in result.failures:
+            _debug_event("warning", "Scan transport failed", transport=failure.transport.value, error=str(failure.error))
+    _debug_event(
+        "scan",
+        "Scan finished",
+        devices=len(result.devices),
+        failures=len(result.failures),
+    )
     return {
         "devices": [
             {
@@ -611,12 +728,17 @@ async def connect(request: ConnectRequest) -> dict[str, str]:
     global _active_printer
     catalog = PrinterCatalog.load()
     discovery = BluetoothDiscovery(catalog)
-    device = await discovery.resolve_device(request.target)
+    _debug_event("connect", "Connect started", target=request.target)
+    try:
+        device = await discovery.resolve_device(request.target)
 
-    reporter = reporting.Reporter([reporting.StderrSink(levels={"debug", "warning", "error"})])
-    connector = BleakBluetoothConnector(reporter=reporter)
-    connection = await connector.connect(device)
-    await connection.disconnect()
+        reporter = reporting.Reporter([reporting.StderrSink(levels={"debug", "warning", "error"})])
+        connector = BleakBluetoothConnector(reporter=reporter)
+        connection = await connector.connect(device)
+        await connection.disconnect()
+    except Exception as exc:
+        _debug_event("error", "Connect failed", target=request.target, error=str(exc))
+        raise
 
     _active_printer = {
         "target": device.address,
@@ -624,6 +746,7 @@ async def connect(request: ConnectRequest) -> dict[str, str]:
         "profile_key": device.profile_key,
         "transport_badge": device.transport_badge,
     }
+    _debug_event("connect", "Connect succeeded", target=device.address, display_name=device.display_name)
     return {
         "target": device.address,
         "display_name": device.display_name,
@@ -699,6 +822,14 @@ async def print_label(request: PrintRequest) -> dict[str, str]:
     if not request.image_data and not request.text.strip():
         raise HTTPException(status_code=400, detail="Missing text or image_data")
 
+    _debug_event(
+        "print",
+        "Print started",
+        bluetooth_target=request.bluetooth,
+        serial_target=request.serial,
+        text_columns=request.text_columns,
+        has_image=bool(request.image_data),
+    )
     args = _build_args(request)
     temp_image: Path | None = None
     if request.image_data:
@@ -717,6 +848,7 @@ async def print_label(request: PrintRequest) -> dict[str, str]:
             reporter = reporting.Reporter([reporting.StderrSink(levels={"debug", "warning", "error"})])
             code = await asyncio.to_thread(cli_app.print_bluetooth, args, reporter)
     except Exception as exc:
+        _debug_event("error", "Print unexpected exception", error=str(exc))
         logger.exception("Unexpected error while handling /api/print request", exc_info=exc)
         raise HTTPException(status_code=500, detail="PRINT_UNEXPECTED_ERROR") from exc
     finally:
@@ -724,6 +856,8 @@ async def print_label(request: PrintRequest) -> dict[str, str]:
             temp_image.unlink(missing_ok=True)
 
     if code != 0:
+        _debug_event("error", "Print failed", exit_code=code)
         raise HTTPException(status_code=500, detail=f"Print failed with exit code {code}")
+    _debug_event("print", "Print job sent")
     return {"message": "Print job sent."}
 
