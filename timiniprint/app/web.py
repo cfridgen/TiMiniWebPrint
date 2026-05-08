@@ -105,6 +105,18 @@ app.mount("/static", StaticFiles(directory=WEB_STATIC_DIR), name="static")
 logger = logging.getLogger("timiniprint.web")
 _active_printer: dict[str, str] | None = None
 _debug_events: deque[dict[str, object]] = deque(maxlen=300)
+_NOISY_HTTP_PATHS = {"/api/debug/logs"}
+
+
+class _SuppressUvicornAccessPathFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return all(f'"{path} ' not in message for path in _NOISY_HTTP_PATHS)
+
+
+_uvicorn_access_logger = logging.getLogger("uvicorn.access")
+if not any(isinstance(item, _SuppressUvicornAccessPathFilter) for item in _uvicorn_access_logger.filters):
+    _uvicorn_access_logger.addFilter(_SuppressUvicornAccessPathFilter())
 
 
 def _now_iso() -> str:
@@ -140,6 +152,7 @@ def _ble_runtime_diagnostics() -> dict[str, object]:
 
 @app.middleware("http")
 async def log_http_requests(request, call_next):
+    path = request.url.path
     started = time.perf_counter()
     try:
         response = await call_next(request)
@@ -149,25 +162,26 @@ async def log_http_requests(request, call_next):
             "error",
             "Unhandled HTTP exception",
             method=request.method,
-            path=request.url.path,
+            path=path,
             duration_ms=round(duration_ms, 1),
         )
-        logger.exception("HTTP %s %s -> 500 in %.1fms", request.method, request.url.path, duration_ms)
+        logger.exception("HTTP %s %s -> 500 in %.1fms", request.method, path, duration_ms)
         raise
     duration_ms = (time.perf_counter() - started) * 1000
-    logger.info(
-        "HTTP %s %s -> %s in %.1fms",
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
-    )
+    if path not in _NOISY_HTTP_PATHS:
+        logger.info(
+            "HTTP %s %s -> %s in %.1fms",
+            request.method,
+            path,
+            response.status_code,
+            duration_ms,
+        )
     if response.status_code >= 400:
         _debug_event(
             "http",
             "HTTP request",
             method=request.method,
-            path=request.url.path,
+            path=path,
             status_code=response.status_code,
             duration_ms=round(duration_ms, 1),
         )
