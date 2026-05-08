@@ -15,10 +15,28 @@ let busyLockCount = 0;
 let isPrinting = false;
 let printAbortController = null;
 let debugEntries = [];
+let clientDebugEntries = [];
 let debugPollTimer = null;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function addClientDebug(kind, message, context = null) {
+  clientDebugEntries.push({
+    ts: nowIso(),
+    kind,
+    message,
+    context,
+  });
+  if (clientDebugEntries.length > 40) {
+    clientDebugEntries = clientDebugEntries.slice(clientDebugEntries.length - 40);
+  }
+}
 
 function log(msg) {
   const text = String(msg || '');
+  addClientDebug('ui', text);
   statusHistory.push(text);
   if (statusHistory.length > 5) {
     statusHistory = statusHistory.slice(statusHistory.length - 5);
@@ -64,7 +82,10 @@ function renderDebugPanel() {
     return;
   }
   list.innerHTML = '';
-  if (!Array.isArray(debugEntries) || debugEntries.length === 0) {
+  const mergedEntries = [...debugEntries, ...clientDebugEntries]
+    .sort((left, right) => String(left.ts || '').localeCompare(String(right.ts || '')));
+
+  if (mergedEntries.length === 0) {
     const item = document.createElement('li');
     item.textContent = 'No debug entries yet.';
     list.appendChild(item);
@@ -72,10 +93,10 @@ function renderDebugPanel() {
     return;
   }
 
-  const latest = debugEntries[debugEntries.length - 1];
-  meta.textContent = `${debugEntries.length} entries (latest: ${latest.ts || 'n/a'})`;
+  const latest = mergedEntries[mergedEntries.length - 1];
+  meta.textContent = `${mergedEntries.length} entries (latest: ${latest.ts || 'n/a'})`;
 
-  [...debugEntries].reverse().forEach((entry) => {
+  [...mergedEntries].reverse().forEach((entry) => {
     const item = document.createElement('li');
     item.textContent = formatDebugEntry(entry);
     list.appendChild(item);
@@ -90,6 +111,8 @@ async function refreshDebugLog(showErrors = true) {
       return;
     }
     if (!res.ok) {
+      addClientDebug('error', 'Debug log request failed', data);
+      renderDebugPanel();
       if (showErrors) {
         log(`Debug log failed: ${JSON.stringify(data)}`);
       }
@@ -98,6 +121,8 @@ async function refreshDebugLog(showErrors = true) {
     debugEntries = Array.isArray(data.entries) ? data.entries : [];
     renderDebugPanel();
   } catch (err) {
+    addClientDebug('error', `Debug log fetch failed: ${err}`);
+    renderDebugPanel();
     if (showErrors) {
       log(`Debug log failed: ${err}`);
     }
@@ -114,6 +139,7 @@ function stopDebugPolling() {
 async function setDebugPanelVisible(visible) {
   const panel = $('debugLogPanel');
   const statusPanel = $('statusHistoryPanel');
+  const meta = $('debugLogMeta');
   if (!panel) {
     return;
   }
@@ -126,6 +152,9 @@ async function setDebugPanelVisible(visible) {
     return;
   }
 
+  if (meta) {
+    meta.textContent = 'Loading debug log...';
+  }
   await refreshDebugLog(false);
   stopDebugPolling();
   debugPollTimer = setInterval(() => {
@@ -820,6 +849,8 @@ window.addEventListener('resize', () => {
 
 async function init() {
   updateColumnsLabel();
+  addClientDebug('system', 'Debug panel initialized');
+  renderDebugPanel();
   await setDebugPanelVisible(true);
   await loadFonts();
   await loadProfiles();
