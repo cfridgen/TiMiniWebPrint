@@ -18,12 +18,73 @@ let debugEntries = [];
 let clientDebugEntries = [];
 let debugPollTimer = null;
 let debugRenderedText = '';
+let debugFeatureEnabled = false;
 
 function nowIso() {
   return new Date().toISOString();
 }
 
+function formatBuildTime(ts) {
+  if (!ts) {
+    return 'unknown';
+  }
+  const parsed = new Date(String(ts));
+  if (Number.isNaN(parsed.getTime())) {
+    return String(ts);
+  }
+  return parsed.toLocaleString('de-DE', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+async function loadBuildInfo() {
+  const el = $('buildInfo');
+  if (!el) {
+    return;
+  }
+  try {
+    const res = await fetch('/api/build-info');
+    if (!res.ok) {
+      el.textContent = 'Build: unavailable';
+      return;
+    }
+    const data = await res.json();
+    const version = data && data.version ? String(data.version) : 'n/a';
+    const buildId = data && data.build_id ? String(data.build_id) : 'local';
+    const startedAt = formatBuildTime(data && data.started_at ? data.started_at : '');
+    debugFeatureEnabled = Boolean(data && data.debug_enabled);
+    el.textContent = `v${version} | ${buildId} | ${startedAt}`;
+    el.title = `Version: ${version}\nBuild: ${buildId}\nStarted: ${startedAt}`;
+  } catch (_err) {
+    el.textContent = 'Build: unavailable';
+    debugFeatureEnabled = false;
+  }
+}
+
+function setDebugAvailability(enabled) {
+  const section = $('debugLogSection');
+  const button = $('debugLogBtn');
+  if (section) {
+    section.classList.toggle('is-enabled', enabled);
+  }
+  if (button) {
+    button.style.display = enabled ? '' : 'none';
+  }
+  if (!enabled) {
+    stopDebugPolling();
+  }
+}
+
 function addClientDebug(kind, message, context = null) {
+  if (!debugFeatureEnabled) {
+    return;
+  }
   clientDebugEntries.push({
     ts: nowIso(),
     kind,
@@ -77,6 +138,9 @@ function formatDebugEntry(entry) {
 }
 
 function renderDebugPanel(force = false) {
+  if (!debugFeatureEnabled) {
+    return;
+  }
   const textField = $('debugLogText');
   const meta = $('debugLogMeta');
   if (!textField || !meta) {
@@ -122,6 +186,9 @@ function renderDebugPanel(force = false) {
 }
 
 async function refreshDebugLog(showErrors = true) {
+  if (!debugFeatureEnabled) {
+    return;
+  }
   try {
     const res = await fetch('/api/debug/logs?limit=160');
     const data = await parseJsonOrLog(res, 'Debug log failed');
@@ -155,6 +222,9 @@ function stopDebugPolling() {
 }
 
 async function setDebugPanelVisible(visible) {
+  if (!debugFeatureEnabled) {
+    return;
+  }
   const panel = $('debugLogPanel');
   const statusPanel = $('statusHistoryPanel');
   const meta = $('debugLogMeta');
@@ -870,10 +940,14 @@ window.addEventListener('resize', () => {
 });
 
 async function init() {
+  await loadBuildInfo();
+  setDebugAvailability(debugFeatureEnabled);
   updateColumnsLabel();
-  addClientDebug('system', 'Debug panel initialized');
-  renderDebugPanel();
-  await setDebugPanelVisible(true);
+  if (debugFeatureEnabled) {
+    addClientDebug('system', 'Debug panel initialized');
+    renderDebugPanel();
+    await setDebugPanelVisible(true);
+  }
   await loadFonts();
   await loadProfiles();
   updateConnectButtonState();

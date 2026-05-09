@@ -105,7 +105,10 @@ app.mount("/static", StaticFiles(directory=WEB_STATIC_DIR), name="static")
 logger = logging.getLogger("timiniprint.web")
 _active_printer: dict[str, str] | None = None
 _debug_events: deque[dict[str, object]] = deque(maxlen=300)
-_NOISY_HTTP_PATHS = {"/api/debug/logs"}
+_DEBUG_FEATURE_ENABLED = (os.environ.get("TIMINIPRINT_WEB_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"})
+_NOISY_HTTP_PATHS = {"/api/debug/logs"} if _DEBUG_FEATURE_ENABLED else set()
+_APP_STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+_APP_BUILD_ID = (os.environ.get("TIMINIPRINT_BUILD") or os.environ.get("TIMINIPRINT_IMAGE_TAG") or "").strip()
 
 
 class _SuppressUvicornAccessPathFilter(logging.Filter):
@@ -124,6 +127,8 @@ def _now_iso() -> str:
 
 
 def _debug_event(kind: str, message: str, **context: object) -> None:
+    if not _DEBUG_FEATURE_ENABLED:
+        return
     entry: dict[str, object] = {
         "ts": _now_iso(),
         "kind": kind,
@@ -411,7 +416,24 @@ def index() -> str:
         #fontSizeOverlay { min-width: 260px; }
         #fontOverlay { left: calc(100% + 12px); top: calc(100% + 10px); min-width: 420px; width: 420px; max-height: 430px; overflow-y: auto; overflow-x: hidden; }
 
-        .status-hub { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+        .status-hub { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+        .build-info {
+            min-height: 34px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 1px solid #dbe7f3;
+            background: #f4f8fd;
+            color: #3c526a;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1.2;
+            letter-spacing: 0.01em;
+            max-width: 340px;
+            text-align: right;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
         #statusHistoryBtn {
             width: 34px;
             min-height: 34px;
@@ -442,7 +464,8 @@ def index() -> str:
         .status-history-title { font-size: 12px; font-weight: 700; color: #3d4a58; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.03em; }
         .status-history-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
         .status-history-list li { font-size: 12px; color: #334a60; background: #f4f8fd; border: 1px solid #dbe7f3; border-radius: 10px; padding: 6px 8px; }
-        .debug-log-section { margin-top: 0; margin-bottom: 14px; }
+        .debug-log-section { display: none; margin-top: 0; margin-bottom: 14px; }
+        .debug-log-section.is-enabled { display: block; }
         .debug-log-panel {
             position: static;
             transform: none;
@@ -556,6 +579,7 @@ def index() -> str:
                     <p>Fast browser workflow for scan, preview, and label printing.</p>
                 </div>
                                 <div class=\"status-hub\">
+                                    <div id=\"buildInfo\" class=\"build-info\">Build: loading...</div>
                                         <button id=\"statusHistoryBtn\" type=\"button\" title=\"Show recent status messages\">i</button>
                                     <button id=\"debugLogBtn\" type=\"button\" title=\"Toggle runtime debug log\">Debug</button>
                                         <div id=\"statusHistoryPanel\" class=\"status-history-panel is-hidden\">
@@ -566,7 +590,7 @@ def index() -> str:
                                         </div>
                                 </div>
             </div>
-            <div class=\"section section-card debug-log-section\">
+            <div id=\"debugLogSection\" class=\"section section-card debug-log-section\">
                 <div id=\"debugLogPanel\" class=\"debug-log-panel\">
                     <div class=\"debug-log-head\">
                         <div class=\"status-history-title\">Runtime Debug Log</div>
@@ -663,8 +687,20 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/build-info")
+def build_info() -> dict[str, object]:
+    return {
+        "build_id": _APP_BUILD_ID,
+        "started_at": _APP_STARTED_AT,
+        "version": app.version,
+        "debug_enabled": _DEBUG_FEATURE_ENABLED,
+    }
+
+
 @app.get("/api/debug/logs")
 def debug_logs(limit: int = Query(default=120, ge=1, le=300)) -> dict[str, object]:
+    if not _DEBUG_FEATURE_ENABLED:
+        raise HTTPException(status_code=404, detail="Debug API disabled")
     entries = list(_debug_events)[-limit:]
     return {
         "entries": entries,
@@ -674,6 +710,8 @@ def debug_logs(limit: int = Query(default=120, ge=1, le=300)) -> dict[str, objec
 
 @app.post("/api/debug/clear")
 def clear_debug_logs() -> dict[str, str]:
+    if not _DEBUG_FEATURE_ENABLED:
+        raise HTTPException(status_code=404, detail="Debug API disabled")
     _debug_events.clear()
     _debug_event("system", "Debug log cleared")
     return {"message": "Debug log cleared."}
