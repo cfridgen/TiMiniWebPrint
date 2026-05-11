@@ -6,9 +6,17 @@ This project is a fork of the original TiMini Print by Dejniel:
 
 This fork keeps the original printing logic and focuses on making installation and daily usage easier for normal users who just want to print.
 
-![ThermoFlow Print banner](EMX_040256.jpg)
+![ThermoFlow Print brand banner](thermoflow_wordmark_dark.png)
 
-![ThermoFlow Print product icon](thermoflow_mark.png)
+<p align="left">
+  <img src="thermoflow_appicon.png" alt="ThermoFlow Print app icon" width="180" />
+</p>
+
+## Brand assets
+
+- Dark wordmark: [thermoflow_wordmark_dark.png](thermoflow_wordmark_dark.png)
+- Light wordmark: [thermoflow_wordmark_light.png](thermoflow_wordmark_light.png)
+- App icon: [thermoflow_appicon.png](thermoflow_appicon.png)
 
 ## 1) What you can do with it (User Guide)
 
