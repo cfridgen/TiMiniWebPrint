@@ -1,6 +1,8 @@
 services:
   timiniprint:
-    image: timiniprint-local:latest
+    # Release channel image is pinned on purpose.
+    # Update this tag only on explicit release deploy requests.
+    image: ghcr.io/cfridgen/timiniwebprint:v0.1.0
     restart: unless-stopped
     privileged: true
     network_mode: host

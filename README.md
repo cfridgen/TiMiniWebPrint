@@ -39,6 +39,11 @@ python3 timiniprint_web.py
 
 Then open `http://127.0.0.1:8901` in your browser.
 
+### Deployment channels
+- Development channel: `ghcr.io/<owner>/timiniwebprint:dev-latest` on port `8901`
+- Release channel: pinned image tag on port `8001` (for example `v0.1.0`)
+- Release tag updates are manual and should only happen on explicit release requests
+
 ## Command line interface
 (the examples use Linux filenames)
 - Print to the first supported Bluetooth printer:

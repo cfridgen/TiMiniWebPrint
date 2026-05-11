@@ -1,6 +1,7 @@
 services:
   timiniprint:
-    image: timiniprint-local:latest
+    # Development channel image (moves with new development builds)
+    image: ghcr.io/cfridgen/timiniwebprint:dev-latest
     restart: unless-stopped
     privileged: true
     network_mode: host
