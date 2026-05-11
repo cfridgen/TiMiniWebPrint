@@ -4,21 +4,6 @@ This project is a fork of the original TiMini Print by Dejniel:
 - Original repository: https://github.com/Dejniel/TiMini-Print
 - Original releases: https://github.com/Dejniel/TiMini-Print/releases
 
-This fork keeps the original printing logic and focuses on making installation and daily usage easier for normal users who just want to print.
-
-![ThermoFlow Print brand banner](thermoflow_wordmark_dark.png)
-
-<p align="left">
-  <img src="thermoflow_appicon.png" alt="ThermoFlow Print app icon" width="180" />
-</p>
-
-## Brand assets
-
-- Dark wordmark: [thermoflow_wordmark_dark.png](thermoflow_wordmark_dark.png)
-- Light wordmark: [thermoflow_wordmark_light.png](thermoflow_wordmark_light.png)
-- App icon: [thermoflow_appicon.png](thermoflow_appicon.png)
-- Usage rules: [brand/BRAND_GUIDELINES.md](brand/BRAND_GUIDELINES.md)
-
 ## 1) What you can do with it (User Guide)
 
 ThermoFlow Print lets you print to many small Bluetooth thermal printers (cat printers, mini printers, sticker printers) directly from a browser.
@@ -165,7 +150,23 @@ Default development web port is:
 - Release uses port `8001`
 - Development uses port `8901`
 
-## 7) Information for self-hosters and developers
+## 7) Branding and visual assets
+
+This fork keeps the original printing logic and focuses on making installation and daily usage easier for normal users who just want to print.
+
+![ThermoFlow Print brand banner](thermoflow_wordmark_dark.png)
+
+<p align="left">
+  <img src="thermoflow_appicon.png" alt="ThermoFlow Print app icon" width="180" />
+</p>
+
+Brand assets:
+- Dark wordmark: [thermoflow_wordmark_dark.png](thermoflow_wordmark_dark.png)
+- Light wordmark: [thermoflow_wordmark_light.png](thermoflow_wordmark_light.png)
+- App icon: [thermoflow_appicon.png](thermoflow_appicon.png)
+- Usage rules: [brand/BRAND_GUIDELINES.md](brand/BRAND_GUIDELINES.md)
+
+## 8) Information for self-hosters and developers
 
 Technical docs:
 - Protocol guide: [docs/protocol.md](docs/protocol.md)
@@ -174,7 +175,7 @@ Technical docs:
 Release management docs:
 - Release checklist: [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
 
-## 8) Development and release model
+## 9) Development and release model
 
 This fork uses two deployment channels:
 
@@ -192,7 +193,7 @@ Build and publish policy:
 - Release images are created via GitHub tag workflow
 - Development images track latest development state
 
-## 9) Fork details (end of document by design)
+## 10) Fork details (end of document by design)
 
 What this fork is:
 - A compatibility-preserving enhancement of the original project
