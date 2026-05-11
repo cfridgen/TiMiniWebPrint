@@ -25,8 +25,6 @@ let buildInfoState = {
   startedAt: '',
 };
 
-const DEBUG_UI_STORAGE_KEY = 'timiniprint.debug-ui-enabled';
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -83,22 +81,6 @@ async function loadBuildInfo() {
   }
 }
 
-function loadDebugUiPreference() {
-  try {
-    return window.localStorage.getItem(DEBUG_UI_STORAGE_KEY) === '1';
-  } catch (_err) {
-    return false;
-  }
-}
-
-function saveDebugUiPreference(enabled) {
-  try {
-    window.localStorage.setItem(DEBUG_UI_STORAGE_KEY, enabled ? '1' : '0');
-  } catch (_err) {
-    // Ignore storage failures.
-  }
-}
-
 function updateBuildInfoDisplay() {
   const el = $('buildInfo');
   if (!el) {
@@ -135,9 +117,6 @@ function setDebugAvailability(enabled) {
 
 async function applyDebugUiState(enabled, persist = true) {
   debugUiEnabled = enabled;
-  if (persist) {
-    saveDebugUiPreference(enabled);
-  }
   updateBuildInfoDisplay();
   setDebugAvailability(enabled);
   if (!enabled) {
@@ -1016,7 +995,7 @@ window.addEventListener('resize', () => {
 
 async function init() {
   await loadBuildInfo();
-  debugUiEnabled = loadDebugUiPreference();
+  debugUiEnabled = false;
   updateBuildInfoDisplay();
   setDebugAvailability(debugUiEnabled);
   updateColumnsLabel();
