@@ -497,7 +497,9 @@ function renderFontOptions() {
         selectedFontKey = font.key;
         renderFontOptions();
         updateFontSummary();
-        syncTextToFontSummary();
+        if (debugUiEnabled) {
+          syncTextToFontSummary();
+        }
         renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
       });
       grid.appendChild(option);
@@ -923,13 +925,17 @@ $('busyCancelBtn').addEventListener('click', () => {
 
 $('columns').addEventListener('input', () => {
   updateColumnsLabel();
-  syncTextToFontSummary();
+  if (debugUiEnabled) {
+    syncTextToFontSummary();
+  }
   schedulePreview();
 });
 
 $('columns').addEventListener('change', () => {
   updateColumnsLabel();
-  syncTextToFontSummary();
+  if (debugUiEnabled) {
+    syncTextToFontSummary();
+  }
   schedulePreview();
 });
 
