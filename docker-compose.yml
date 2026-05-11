@@ -1,14 +1,14 @@
 services:
   timiniprint:
-    image: ghcr.io/cfridgen/timiniwebprint:latest
-    pull_policy: always
+    image: timiniprint-local:latest
     restart: unless-stopped
     privileged: true
-    ports:
-      - "8001:8000"
+    network_mode: host
     environment:
       # Bluetooth / DBus
       DBUS_SYSTEM_BUS_ADDRESS: "unix:path=/run/dbus/system_bus_socket"
+      # Web port (8001 to avoid conflict with Portainer's port 8000)
+      APP_PORT: "8001"
       # node_exporter (set to 0 to disable)
       NODE_EXPORTER_ENABLED: "1"
       NODE_EXPORTER_ARGS: "--collector.disable-defaults --collector.cpu --collector.meminfo --collector.filesystem"
@@ -18,8 +18,5 @@ services:
       - /var/run/dbus:/var/run/dbus
       # Optional but useful for BlueZ adapter visibility in some setups
       - /run/udev:/run/udev:ro
-    cap_add:
-      - NET_ADMIN   # needed for BLE socket creation
-      - NET_RAW     # needed for BLE/Bluetooth raw sockets
     security_opt:
       - seccomp=unconfined  # allow AF_BLUETOOTH RFCOMM sockets in container
