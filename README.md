@@ -6,82 +6,35 @@
 
 ## ✨ What is TiMini Print?
 
-A powerful alternative to proprietary apps for **Chinese Bluetooth thermal printers** that use proprietary protocols (not ESC/POS). Works as a replacement for "Tiny Print", "Fun Print", "Phomemo", "iBleem", and similar apps.
+A practical desktop/web tool for **Chinese Bluetooth thermal printers** (non ESC/POS), compatible with apps like Tiny Print, Fun Print, Phomemo, and iBleem.
 
-**Supports 200+ printer models** — from A200 to ZPA4Z1. [See full list](#supported-printer-models).
+**Supports 200+ printer models**. This fork keeps upstream behavior and adds deployment and operations improvements.
 
-### 📋 Core Features
-
-| Feature | Details |
-|---------|---------|
-| 🖼️ **Images** | PNG, JPG, GIF, BMP with automatic scaling |
-| 📄 **PDFs** | Multi-page support with automatic optimization |
-| 📝 **Text** | Monospace, bold, word-wrapped output |
-| 🌐 **Web App** | Modern UI with live printer detection |
-| ⚡ **CLI Mode** | "Fire and forget" automation |
-| 🔌 **API** | Build custom integrations with the library |
-| 🐧 **Cross-Platform** | Windows, Linux, macOS (no driver needed) |
-
-**Original creator:** [Dejniel](https://github.com/Dejniel) | **[Original Repository](https://github.com/Dejniel/TiMini-Print)**
+**Original creator:** [Dejniel](https://github.com/Dejniel) | **Upstream repo:** [Dejniel/TiMini-Print](https://github.com/Dejniel/TiMini-Print)
 
 ![TiMini Print LOGO EMX-040256 Printer Psi Patrol](EMX_040256.jpg)
 
 ---
 
-## 🚀 Fork-Specific Enhancements
+## 🚀 Fork Changes (Only)
 
-This fork adds production-grade improvements. **Original functionality is 100% intact** — these are additions:
+| Area | What we added | Why it matters |
+|------|----------------|----------------|
+| Channels | Release channel on `8001`, Dev channel on `8901` | Stable releases + fast iteration |
+| Linux Bluetooth in Docker | DBus + udev mounts, host networking | Printer scan/connect works reliably |
+| Debug handling | Unified `setupDebugMode()` + feature flag | Predictable behavior, safer default UI |
+| Containerization | Production Dockerfile + monitoring hooks | Better observability and operations |
+| Releases | Tag-driven GitHub release images (`v1.0.0`) | Reproducible deployments without hash juggling |
 
-### 1. **Release/Development Channel Architecture** 🔄
+### ✅ What remains unchanged from upstream
+- Core protocol and printer compatibility
+- CLI behavior and print pipeline
+- Web app core flow (scan, connect, print)
+- Supported printer model catalog
 
-Separate deployment pipelines for stability and rapid iteration:
-
-```
-Master Branch       
-     ↓
-     ├─→ dev-latest tag (Port 8901) ← Development Channel
-     │   [Latest code, frequent updates, experimental]
-     │
-     └─→ Git Tag (v1.0.0)
-         ↓
-         v1.0.0 (Port 8001) ← Release Channel  
-         [Pinned image, stable, monitored]
-```
-
-- **Release (port 8001)**: Immutable images, comprehensive monitoring, slow steady cadence
-- **Development (port 8901)**: Latest features, rapid updates, direct Portainer deployment
-
-### 2. **Fixed Bluetooth on Linux Docker** ✅
-
-Resolved critical containerization issues for Bluetooth scanning:
-- ✅ DBus socket mounts (`/run/dbus`, `/var/run/dbus`)
-- ✅ udev integration for device discovery (`/run/udev:ro`)
-- ✅ Tested multi-device printer detection
-- ✅ Host network mode for stable connectivity
-
-### 3. **Consolidated Debug System** 🔧
-
-All debug features managed by one entry point:
-- Feature-flagged via `TIMINIPRINT_WEB_DEBUG` environment variable
-- Debug UI hidden by default (safe, can't accidentally misconfigure)
-- REST API endpoints with proper authorization checks
-- Backend and frontend in sync
-
-### 4. **Production-Ready Containerization** 🐳
-
-Docker-first deployment architecture:
-- Multi-stage builds for minimal image size
-- Prometheus Node Exporter integration (monitoring-ready)
-- Environment-driven config (no hardcoded ports/versions)
-- Health checks and proper signal handling
-
-### 5. **Clear, Repeatable Release Process** 📦
-
-Professional release management:
-- GitHub Actions with channel-aware tagging (`dev-latest`, `v1.0.0`)
-- Semantic versioning throughout
-- `RELEASE_CHECKLIST.md` with step-by-step procedure
-- Immutable release images (no drift from latest)
+### 🔄 Deployment flow
+`master` -> `dev-latest` (port `8901`)  
+`git tag vX.Y.Z` -> `vX.Y.Z` + `release-latest` (port `8001`)
 
 ---
 
@@ -109,128 +62,23 @@ python3 timiniprint_web.py
 # Opens http://localhost:8901
 ```
 
-**Command Line CLI:**
-(the examples use Linux filenames)
-- Print to the first supported Bluetooth printer:
-  ```bash
-  ./TiMini-Print-Command-Line-Linux-x86_64 /path/to/file.pdf
-  ```
+**CLI quick example:**
+```bash
+./TiMini-Print-Command-Line-Linux-x86_64 --scan
+```
 
-- Print to a specific Bluetooth printer:
-  ```bash
-  ./TiMini-Print-Command-Line-Linux-x86_64 --bluetooth "PRINTER_NAME" /path/to/file.pdf
-  ```
-
-- Print via a serial port (skip Bluetooth connection):
-  ```bash
-  ./TiMini-Print-Command-Line-Linux-x86_64 --bluetooth "PRINTER_NAME" --export-device-config printer.json
-  ./TiMini-Print-Command-Line-Linux-x86_64 --serial /dev/rfcomm0 --device-config printer.json /path/to/file.pdf
-  ```
-
-- Print raw text without creating a file:
-  ```bash
-  ./TiMini-Print-Command-Line-Linux-x86_64 --text "Hello from CLI"
-  ```
-
-- List available printer profiles:
-  ```bash
-  ./TiMini-Print-Command-Line-Linux-x86_64 --list-profiles
-  ```
-
-- Scan for supported printers:
-  ```bash
-  ./TiMini-Print-Command-Line-Linux-x86_64 --scan
-  ```
+For full CLI options and integration details, see [docs/protocol.md](docs/protocol.md) and [docs/architecture.md](docs/architecture.md).
 
 ---
 
-## 📖 Documentation
+## 📌 Important Links
 
-### Original Project Documentation
-- 🔗 **[Original Repository](https://github.com/Dejniel/TiMini-Print)** — Creator's code, original README, issues
-- 📄 [Protocol Reference](docs/protocol.md) — Printer protocol details
-- 🏗️ [Architecture Guide](docs/architecture.md) — Design rationale
-
-### Release Management
-- 📋 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) — Step-by-step release procedure
-- 🔄 Deployment policy: Releases via GitHub tags only, dev direct to Portainer
-
----
-
-## 🔍 What Changed in This Fork?
-
-### Code Changes
-| File | Change | Purpose |
-|------|--------|---------|
-| `timiniprint/app/web.py` | Debug consolidation in `setupDebugMode()` | Single control point for all debug features |
-| `timiniprint/app/web_static/app.js` | Defensive debug guards | Safe UI state management |
-| `docker-compose.yml` | Port 8901, dev-latest image | Development channel config |
-| `docker-compose.release.yml` | Port 8001, pinned v1.0.0 image | Release channel config |
-| `Dockerfile` | Multi-stage, Node Exporter, env vars | Production-grade containerization |
-| `.github/workflows/docker-publish.yml` | Channel-aware tagging | Automatic image publishing |
-
-### New Files
-- `RELEASE_CHECKLIST.md` — Release procedure (5 steps)
-- `docker-compose.release.yml` — Stable release deployment
-
-### No Breaking Changes
-✅ Original CLI works unchanged  
-✅ Original web app works unchanged  
-✅ All 200+ printer models still supported  
-✅ Printer detection, printing, features all intact  
-
----
-
-## 👥 Contributing & Support
-
-### For Bugs/Features in Original Code
-Please report to **[Dejniel's Repository](https://github.com/Dejniel/TiMini-Print/issues)** — that's where the core development happens.
-
-### For Fork-Specific Issues (Docker, channels, debug system)
-Report here in this repository with `[Fork]` prefix in the title.
-
-### Original Project Support
-- 💙 Support Dejniel on [Buy Me a Coffee](https://buymeacoffee.com/dejniel)
-- 🔗 [Contact Dejniel](https://inajiffy.eu/) for professional support
-- 📚 Original project is open source — contributions welcome
-
----
-
-## 📋 Supported Formats
-- Images: .png .jpg .jpeg .gif .bmp
-- PDF: prints all pages
-- Text: .txt (monospace bold, word-wrapped by default)
-
-## 📋 CLI Reference
-
-### Notes
-- If `--bluetooth` is omitted, the first supported printer found is used
-- For `--serial`, you must pass `--device-config`
-- `--export-device-config` writes the full resolved runtime config as JSON and `--device-config` loads that JSON back and forces the saved protocol/profile/runtime values
-- On first Classic connection on Windows/macOS, the system may request pairing confirmation
-
-### Library Integration
-If you want to build your own integration instead of using only the bundled web app or CLI, start with [docs/protocol.md](docs/protocol.md). It is the practical first-steps guide to creating a `PrinterDevice`, building a printable job, and sending it through a connector from your own code. If you also want the package boundaries and design rationale behind that API, continue with [docs/architecture.md](docs/architecture.md).
-
----
-
-## 🔗 Links
-
-| Link | Purpose |
-|------|---------|
-| [Dejniel/TiMini-Print](https://github.com/Dejniel/TiMini-Print) | **Original repository** |
-| [Releases](https://github.com/Dejniel/TiMini-Print/releases) | Original binary downloads |
-| [Buy Me a Coffee](https://buymeacoffee.com/dejniel) | Support the original creator |
-| [inajiffy.eu](https://inajiffy.eu/) | Professional support & consulting |
-
----
-
-<div align="center">
-
-**This is a community enhancement of [Dejniel's excellent project](https://github.com/Dejniel/TiMini-Print).**  
-Please support the original creator if you find this tool useful! 💙
-
-</div>
+- Upstream repository: [Dejniel/TiMini-Print](https://github.com/Dejniel/TiMini-Print)
+- Upstream issues: [github.com/Dejniel/TiMini-Print/issues](https://github.com/Dejniel/TiMini-Print/issues)
+- Release process (this fork): [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
+- Fork governance and upstream sync policy: [FORK_POLICY.md](FORK_POLICY.md)
+- Protocol docs: [docs/protocol.md](docs/protocol.md)
+- Architecture docs: [docs/architecture.md](docs/architecture.md)
 
 ---
 
