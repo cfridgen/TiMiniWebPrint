@@ -1,88 +1,87 @@
-# 🖨️ TiMini Print — Enhanced Docker Edition
+# TiMini Print - Docker Edition for End Users
 
-> **🔗 Community Fork of [Dejniel's TiMini-Print](https://github.com/Dejniel/TiMini-Print)**
-> 
-> This is a production-enhanced fork adding containerization, robust Bluetooth support, and release/development channel separation. **All original functionality is preserved** — this is an enhancement, not a reimplementation.
+This project is a fork of the original TiMini Print by Dejniel:
+- Original repository: https://github.com/Dejniel/TiMini-Print
+- Original releases: https://github.com/Dejniel/TiMini-Print/releases
 
-## ✨ What is TiMini Print?
+This fork keeps the original printing logic and focuses on making installation and daily usage easier for normal users who just want to print.
 
-A practical desktop/web tool for **Chinese Bluetooth thermal printers** (non ESC/POS), compatible with apps like Tiny Print, Fun Print, Phomemo, and iBleem.
+![TiMini Print printer banner](EMX_040256.jpg)
 
-**Supports 200+ printer models**. This fork keeps upstream behavior and adds deployment and operations improvements.
+## 1) What you can do with it (User Guide)
 
-**Original creator:** [Dejniel](https://github.com/Dejniel) | **Upstream repo:** [Dejniel/TiMini-Print](https://github.com/Dejniel/TiMini-Print)
+TiMini Print lets you print to many small Bluetooth thermal printers (cat printers, mini printers, sticker printers) directly from a browser.
 
-![TiMini Print LOGO EMX-040256 Printer Psi Patrol](EMX_040256.jpg)
+You can print:
+- Images: PNG, JPG, JPEG, GIF, BMP
+- PDF files
+- Plain text
 
----
+You do not need to be a software developer to use this.
 
-## 🚀 Fork Changes (Only)
+## 2) Quick Install for normal users (Portainer)
 
-| Area | What we added | Why it matters |
-|------|----------------|----------------|
-| Channels | Release channel on `8001`, Dev channel on `8901` | Stable releases + fast iteration |
-| Linux Bluetooth in Docker | DBus + udev mounts, host networking | Printer scan/connect works reliably |
-| Debug handling | Unified `setupDebugMode()` + feature flag | Predictable behavior, safer default UI |
-| Containerization | Production Dockerfile + monitoring hooks | Better observability and operations |
-| Releases | Tag-driven GitHub release images (`v1.0.0`) | Reproducible deployments without hash juggling |
+If you use Portainer, this is the easiest way.
 
-### ✅ What remains unchanged from upstream
-- Core protocol and printer compatibility
-- CLI behavior and print pipeline
-- Web app core flow (scan, connect, print)
-- Supported printer model catalog
+### Step 1: Open Stacks in Portainer
+- Go to Stacks
+- Click Add stack
+- Name it: `timiniprint`
 
-### 🔄 Deployment flow
-`master` -> `dev-latest` (port `8901`)  
-`git tag vX.Y.Z` -> `vX.Y.Z` + `release-latest` (port `8001`)
+### Step 2: Paste this compose file
+Use the stable release image:
 
----
-
-## 🛠️ Quick Start
-
-### From Docker (Recommended)
-
-**Development (latest features):**
-```bash
-docker-compose up -d
-# Access at http://localhost:8901
+```yaml
+services:
+  timiniprint:
+    image: ghcr.io/cfridgen/timiniwebprint:v1.0.0
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    environment:
+      DBUS_SYSTEM_BUS_ADDRESS: "unix:path=/run/dbus/system_bus_socket"
+      APP_PORT: "8001"
+    volumes:
+      - /run/dbus:/run/dbus
+      - /var/run/dbus:/var/run/dbus
+      - /run/udev:/run/udev:ro
+    security_opt:
+      - seccomp=unconfined
 ```
 
-**Release (stable):**
-```bash
-docker-compose -f docker-compose.release.yml up -d
-# Access at http://localhost:8001
-```
+### Step 3: Deploy
+- Click Deploy the stack
+- Wait until container status is running
 
-### From Source
+### Step 4: Open the web app
+Open in your browser:
+- `http://YOUR_SERVER_IP:8001`
 
-**Web App:**
-```bash
-python3 timiniprint_web.py
-# Opens http://localhost:8901
-```
+Example:
+- `http://192.168.1.20:8001`
 
-**CLI quick example:**
-```bash
-./TiMini-Print-Command-Line-Linux-x86_64 --scan
-```
+## 3) First print in 60 seconds
 
-For full CLI options and integration details, see [docs/protocol.md](docs/protocol.md) and [docs/architecture.md](docs/architecture.md).
+1. Open the web page
+2. Click Scan for printers
+3. Select your printer
+4. Upload image or PDF
+5. Click Print
 
----
+If no printer appears:
+- Make sure Bluetooth is enabled on the host
+- Keep printer close to the server (first test within 1-2 meters)
+- Restart printer and scan again
 
-## 📌 Important Links
+## 4) Compatibility and supported models
 
-- Upstream repository: [Dejniel/TiMini-Print](https://github.com/Dejniel/TiMini-Print)
-- Upstream issues: [github.com/Dejniel/TiMini-Print/issues](https://github.com/Dejniel/TiMini-Print/issues)
-- Release process (this fork): [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
-- Fork governance and upstream sync policy: [FORK_POLICY.md](FORK_POLICY.md)
-- Protocol docs: [docs/protocol.md](docs/protocol.md)
-- Architecture docs: [docs/architecture.md](docs/architecture.md)
+The project supports many models. If your model name is not listed, it can still work (many devices are clones with different names).
 
----
+Tip:
+- Best way to verify compatibility is: deploy, scan, test-print a small image.
 
-## 📋 Supported Printer Models
+<details>
+<summary>Show detailed supported model list</summary>
 
 A200, A33, A41II, A41III, A42II, A43, A4300, CMT-0510, CP01, D1, D100, DL GE225, DL X2, DL X2 Pro, DL X7, DL X7 Pro, DT1-0, DTR-R0, DY03, DY49, EMX-040256, FC02, GB01, GB02, GB02SH, GB03, GB03PH, GB03PL, GB03SH, GB03SL, GB04, GB05, GB06, GL-VS9, GT01, GT03, GT04, GT08, GT09, GT10, GW08, GW09, HD1, HT0125, IM.04, IprintIt Printer, JRX01, JX001, JX002, JX003, JX004, JX005, JX006, JXM800, KF-5, LGM01, LP6, LP100, Label Printer CPLM10, Luxorp.PX10, ML-MP-01, MPA81, MV-B530, Mini Printer CTP500, MX05, MX07, MX08, MX09, MX11, P1, P2, P4, P5, P5AI, P6, P7, P7H, P10, PR02, PR07, PR20, PR25, PR30, PR35, PR88, PR89, PR893, PT001, Pocket Printer, Professional Printer CTP100LG, QDID, QDX01, ROSSMANN, RS9000, S01, S101, S102, SC03, SC03H, SC03h, SC04, SC04H, SC04h, SC05, Seznik Echo, Seznik Neo, Shipping Printer CTP750BY, Shipping Printer CTP800BD, TCM690464, U1, UXPORTMIP, V5X, WL01, WTS07, X100, X101H, X102, X103H, X103h, X16, X2H, X2h, X5, X5H, X5HP, X5h, X6H, X6HP, X6h, X7, X7H, X7HP, X7h, X8, X8-L, X8-W, X9, XC9, XiaoWa, XOPOPPY, YK06, YTB01, ZHHC, ZP801, ZP802, ZPA4Z1, 0019B-C, 0019B-D, 15P3, 58P5, AN01, DY01, Ewtto ET-Z0504, FL01, LT01, LY01, LY02, LY03, LY05, LY11, M01, M2, RT034h
 - JX001 and clones: JX01
@@ -111,18 +110,93 @@ A200, A33, A41II, A41III, A42II, A43, A4300, CMT-0510, CP01, D1, D100, DL GE225,
 - PR02 and clones: XW008
 - PR07 and clones: XW009
 
-## Experimental support
-These entries are available, but they still need more real-device reports and tuning. In Bluetooth device lists they appear as `[experimental]`
+Experimental support:
+- P100, MP100, P100S, MP100S, LP100S, P3, P3S
 
-Experimental printer models:
-P100, MP100, P100S, MP100S, LP100S, P3, P3S
+</details>
 
-Experimental Bluetooth names:
-- P100 and clones: YINTIBAO-V5, MP200, MP220, AEQ918N4
-- P100S and clones: YINTIBAO-V5PRO, MP200S, MP220S
-- LP100 and clones: LP220, LY100_BLE
-- LP100S and clones: LP220S
-- P3 and clones: MP300
-- P3S and clones: MP300S
-- DCK and clones: C21, D2, E2, NEWSMY
-- V10G and clones: MXW-A4
+## 5) Installation alternatives (if you do not use Portainer)
+
+### Docker Compose on Linux
+
+Clone this repo and run:
+
+```bash
+docker compose -f docker-compose.release.yml up -d
+```
+
+Then open:
+- `http://127.0.0.1:8001`
+
+### Run from Python source (advanced users)
+
+```bash
+pip install -r requirements.txt
+python3 timiniprint_web.py
+```
+
+Default development web port is:
+- `http://127.0.0.1:8901`
+
+## 6) Troubleshooting (simple)
+
+### No printers found
+- Confirm host Bluetooth service is running
+- Confirm DBus mounts are present (`/run/dbus`, `/var/run/dbus`)
+- Reboot printer and retry scan
+
+### Page opens, but print does not start
+- Test with a small black/white image first
+- Try one-page PDF first
+- Reconnect printer and retry
+
+### Port is already used
+- Release uses port `8001`
+- Development uses port `8901`
+
+## 7) Information for self-hosters and developers
+
+Technical docs:
+- Protocol guide: [docs/protocol.md](docs/protocol.md)
+- Architecture: [docs/architecture.md](docs/architecture.md)
+
+Release management docs:
+- Release checklist: [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
+
+## 8) Development and release model
+
+This fork uses two deployment channels:
+
+- Release channel:
+  - Image: `ghcr.io/cfridgen/timiniwebprint:v1.0.0`
+  - Port: `8001`
+  - Goal: stability for normal users
+
+- Development channel:
+  - Image: `ghcr.io/cfridgen/timiniwebprint:dev-latest`
+  - Port: `8901`
+  - Goal: rapid testing of new changes
+
+Build and publish policy:
+- Release images are created via GitHub tag workflow
+- Development images track latest development state
+
+## 9) Fork details (end of document by design)
+
+What this fork is:
+- A compatibility-preserving enhancement of the original project
+- Focused on easier container deployment and operations
+- Not a rewrite and not a replacement of upstream
+
+What this fork changed:
+- Better Docker/Portainer out-of-the-box setup
+- More robust Bluetooth support inside containers
+- Clear release/dev separation
+- Consolidated debug controls
+
+Upstream policy:
+- We do not push changes back to Dejniel's repository directly from here
+- We can review upstream changes and selectively integrate them after testing
+
+Detailed governance:
+- [FORK_POLICY.md](FORK_POLICY.md)
