@@ -21,7 +21,7 @@ from .diagnostics import emit_startup_warnings
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="tiMiniWebPrint: Bluetooth printing for TiMini-compatible thermal printers."
+        description="ThermoFlow Print: Bluetooth printing for TiMini-compatible thermal printers."
     )
     parser.add_argument("path", nargs="?", help="File to print (.png/.jpg/.pdf/.txt)")
     parser.add_argument("--bluetooth", help="Bluetooth name or address (default: first supported printer)")

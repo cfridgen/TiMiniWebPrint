@@ -1,4 +1,4 @@
-# tiMiniWebPrint - Docker Edition for End Users
+# ThermoFlow Print - Docker Edition for End Users
 
 This project is a fork of the original TiMini Print by Dejniel:
 - Original repository: https://github.com/Dejniel/TiMini-Print
@@ -6,11 +6,13 @@ This project is a fork of the original TiMini Print by Dejniel:
 
 This fork keeps the original printing logic and focuses on making installation and daily usage easier for normal users who just want to print.
 
-![tiMiniWebPrint printer banner](EMX_040256.jpg)
+![ThermoFlow Print banner](EMX_040256.jpg)
+
+![ThermoFlow Print product icon](thermoflow_mark.png)
 
 ## 1) What you can do with it (User Guide)
 
-tiMiniWebPrint lets you print to many small Bluetooth thermal printers (cat printers, mini printers, sticker printers) directly from a browser.
+ThermoFlow Print lets you print to many small Bluetooth thermal printers (cat printers, mini printers, sticker printers) directly from a browser.
 
 You can print:
 - Images: PNG, JPG, JPEG, GIF, BMP
