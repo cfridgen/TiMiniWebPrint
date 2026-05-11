@@ -48,7 +48,40 @@ function formatBuildTime(ts) {
   });
 }
 
-async function loadBuildInfo() {
+// ============================================================================
+// Unified Debug Mode Management
+// ============================================================================
+
+async function setupDebugMode() {
+  // Load build info from backend API
+  await _loadBuildInfoFromBackend();
+  
+  // Initialize debug UI state (always starts disabled)
+  debugUiEnabled = false;
+  _updateDebugUiDisplay();
+  _configureDebugUiVisibility(false);
+  
+  // Attach event handler for debug badge toggle
+  _attachDebugToggleHandler();
+}
+
+async function toggleDebugMode() {
+  debugUiEnabled = !debugUiEnabled;
+  _updateDebugUiDisplay();
+  _configureDebugUiVisibility(debugUiEnabled);
+  
+  if (!debugUiEnabled) {
+    await setDebugPanelVisible(false);
+    return;
+  }
+  
+  addClientDebug('system', 'Debug panel initialized');
+  renderDebugPanel(true);
+  await setDebugPanelVisible(true);
+}
+
+// Private helper: Load build info from backend
+async function _loadBuildInfoFromBackend() {
   const el = $('buildInfo');
   if (!el) {
     return;
@@ -61,7 +94,6 @@ async function loadBuildInfo() {
         buildId: 'local',
         startedAt: '',
       };
-      updateBuildInfoDisplay();
       return;
     }
     const data = await res.json();
@@ -70,18 +102,17 @@ async function loadBuildInfo() {
       buildId: data && data.build_id ? String(data.build_id) : 'local',
       startedAt: formatBuildTime(data && data.started_at ? data.started_at : ''),
     };
-    updateBuildInfoDisplay();
   } catch (_err) {
     buildInfoState = {
       version: 'n/a',
       buildId: 'local',
       startedAt: '',
     };
-    updateBuildInfoDisplay();
   }
 }
 
-function updateBuildInfoDisplay() {
+// Private helper: Update the build info badge display
+function _updateDebugUiDisplay() {
   const el = $('buildInfo');
   if (!el) {
     return;
@@ -97,10 +128,12 @@ function updateBuildInfoDisplay() {
   el.title = `Version: ${buildInfoState.version}\nBuild: ${buildInfoState.buildId}\nStarted: ${buildInfoState.startedAt}`;
 }
 
-function setDebugAvailability(enabled) {
+// Private helper: Configure debug UI element visibility
+function _configureDebugUiVisibility(enabled) {
   const section = $('debugLogSection');
   const button = $('debugLogBtn');
   const autofillRow = $('syncFontToggleRow');
+  
   if (section) {
     section.classList.toggle('is-enabled', enabled);
   }
@@ -110,22 +143,20 @@ function setDebugAvailability(enabled) {
   if (autofillRow) {
     autofillRow.style.display = enabled ? 'flex' : 'none';
   }
+  
   if (!enabled) {
     stopDebugPolling();
   }
 }
 
-async function applyDebugUiState(enabled, persist = true) {
-  debugUiEnabled = enabled;
-  updateBuildInfoDisplay();
-  setDebugAvailability(enabled);
-  if (!enabled) {
-    await setDebugPanelVisible(false);
-    return;
+// Private helper: Attach debug badge click toggle handler
+function _attachDebugToggleHandler() {
+  const buildInfoButton = $('buildInfo');
+  if (buildInfoButton) {
+    buildInfoButton.addEventListener('click', async () => {
+      await toggleDebugMode();
+    });
   }
-  addClientDebug('system', 'Debug panel initialized');
-  renderDebugPanel(true);
-  await setDebugPanelVisible(true);
 }
 
 function addClientDebug(kind, message, context = null) {
@@ -955,13 +986,6 @@ $('statusHistoryBtn').addEventListener('click', (e) => {
   $('statusHistoryPanel').classList.toggle('is-hidden');
 });
 
-const buildInfoButton = $('buildInfo');
-if (buildInfoButton) {
-  buildInfoButton.addEventListener('click', async () => {
-    await applyDebugUiState(!debugUiEnabled);
-  });
-}
-
 $('debugLogBtn').addEventListener('click', async (e) => {
   e.stopPropagation();
   $('statusHistoryPanel').classList.add('is-hidden');
@@ -1003,14 +1027,8 @@ window.addEventListener('resize', () => {
 });
 
 async function init() {
-  await loadBuildInfo();
-  debugUiEnabled = false;
-  updateBuildInfoDisplay();
-  setDebugAvailability(debugUiEnabled);
+  await setupDebugMode();
   updateColumnsLabel();
-  if (debugUiEnabled) {
-    await applyDebugUiState(true, false);
-  }
   await loadFonts();
   await loadProfiles();
   updateConnectButtonState();
