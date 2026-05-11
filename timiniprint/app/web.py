@@ -105,8 +105,8 @@ app.mount("/static", StaticFiles(directory=WEB_STATIC_DIR), name="static")
 logger = logging.getLogger("timiniprint.web")
 _active_printer: dict[str, str] | None = None
 _debug_events: deque[dict[str, object]] = deque(maxlen=300)
-_DEBUG_FEATURE_ENABLED = (os.environ.get("TIMINIPRINT_WEB_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"})
-_NOISY_HTTP_PATHS = {"/api/debug/logs"} if _DEBUG_FEATURE_ENABLED else set()
+_DEBUG_FEATURE_ENABLED = True
+_NOISY_HTTP_PATHS = {"/api/debug/logs"}
 _APP_STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 _APP_BUILD_ID = (os.environ.get("TIMINIPRINT_BUILD") or os.environ.get("TIMINIPRINT_IMAGE_TAG") or "").strip()
 
@@ -433,6 +433,15 @@ def index() -> str:
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            cursor: pointer;
+            user-select: none;
+        }
+        .build-info.is-debug-toggle {
+            min-width: 34px;
+            max-width: 34px;
+            padding: 8px 0;
+            border-radius: 50%;
+            text-align: center;
         }
         #statusHistoryBtn {
             width: 34px;
@@ -579,7 +588,7 @@ def index() -> str:
                     <p>Fast browser workflow for scan, preview, and label printing.</p>
                 </div>
                                 <div class=\"status-hub\">
-                                    <div id=\"buildInfo\" class=\"build-info\">Build: loading...</div>
+                                    <div id=\"buildInfo\" class=\"build-info\">D</div>
                                         <button id=\"statusHistoryBtn\" type=\"button\" title=\"Show recent status messages\">i</button>
                                     <button id=\"debugLogBtn\" type=\"button\" title=\"Toggle runtime debug log\">Debug</button>
                                         <div id=\"statusHistoryPanel\" class=\"status-history-panel is-hidden\">
@@ -615,7 +624,7 @@ def index() -> str:
             </div>
 
             <div class=\"section section-card\">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                <div id="syncFontToggleRow" style="display:none;align-items:center;justify-content:space-between;margin-bottom:4px;">
                     <label for="text" style="margin-bottom:0;">Label text</label>
                     <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#6a7d90;cursor:pointer;margin-bottom:0;">
                         <input type="checkbox" id="syncFontToggle" checked style="width:auto;margin-bottom:0;"> auto-fill

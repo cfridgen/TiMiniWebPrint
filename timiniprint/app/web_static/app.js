@@ -18,7 +18,14 @@ let debugEntries = [];
 let clientDebugEntries = [];
 let debugPollTimer = null;
 let debugRenderedText = '';
-let debugFeatureEnabled = false;
+let debugUiEnabled = false;
+let buildInfoState = {
+  version: 'n/a',
+  buildId: 'local',
+  startedAt: '',
+};
+
+const DEBUG_UI_STORAGE_KEY = 'timiniprint.debug-ui-enabled';
 
 function nowIso() {
   return new Date().toISOString();
@@ -51,38 +58,99 @@ async function loadBuildInfo() {
   try {
     const res = await fetch('/api/build-info');
     if (!res.ok) {
-      el.textContent = 'Build: unavailable';
+      buildInfoState = {
+        version: 'n/a',
+        buildId: 'local',
+        startedAt: '',
+      };
+      updateBuildInfoDisplay();
       return;
     }
     const data = await res.json();
-    const version = data && data.version ? String(data.version) : 'n/a';
-    const buildId = data && data.build_id ? String(data.build_id) : 'local';
-    const startedAt = formatBuildTime(data && data.started_at ? data.started_at : '');
-    debugFeatureEnabled = Boolean(data && data.debug_enabled);
-    el.textContent = `v${version} | ${buildId} | ${startedAt}`;
-    el.title = `Version: ${version}\nBuild: ${buildId}\nStarted: ${startedAt}`;
+    buildInfoState = {
+      version: data && data.version ? String(data.version) : 'n/a',
+      buildId: data && data.build_id ? String(data.build_id) : 'local',
+      startedAt: formatBuildTime(data && data.started_at ? data.started_at : ''),
+    };
+    updateBuildInfoDisplay();
   } catch (_err) {
-    el.textContent = 'Build: unavailable';
-    debugFeatureEnabled = false;
+    buildInfoState = {
+      version: 'n/a',
+      buildId: 'local',
+      startedAt: '',
+    };
+    updateBuildInfoDisplay();
   }
+}
+
+function loadDebugUiPreference() {
+  try {
+    return window.localStorage.getItem(DEBUG_UI_STORAGE_KEY) === '1';
+  } catch (_err) {
+    return false;
+  }
+}
+
+function saveDebugUiPreference(enabled) {
+  try {
+    window.localStorage.setItem(DEBUG_UI_STORAGE_KEY, enabled ? '1' : '0');
+  } catch (_err) {
+    // Ignore storage failures.
+  }
+}
+
+function updateBuildInfoDisplay() {
+  const el = $('buildInfo');
+  if (!el) {
+    return;
+  }
+  if (!debugUiEnabled) {
+    el.textContent = 'D';
+    el.title = 'Enable debug mode';
+    el.classList.add('is-debug-toggle');
+    return;
+  }
+  el.classList.remove('is-debug-toggle');
+  el.textContent = `v${buildInfoState.version} | ${buildInfoState.buildId} | ${buildInfoState.startedAt}`;
+  el.title = `Version: ${buildInfoState.version}\nBuild: ${buildInfoState.buildId}\nStarted: ${buildInfoState.startedAt}`;
 }
 
 function setDebugAvailability(enabled) {
   const section = $('debugLogSection');
   const button = $('debugLogBtn');
+  const autofillRow = $('syncFontToggleRow');
   if (section) {
     section.classList.toggle('is-enabled', enabled);
   }
   if (button) {
     button.style.display = enabled ? '' : 'none';
   }
+  if (autofillRow) {
+    autofillRow.style.display = enabled ? 'flex' : 'none';
+  }
   if (!enabled) {
     stopDebugPolling();
   }
 }
 
+async function applyDebugUiState(enabled, persist = true) {
+  debugUiEnabled = enabled;
+  if (persist) {
+    saveDebugUiPreference(enabled);
+  }
+  updateBuildInfoDisplay();
+  setDebugAvailability(enabled);
+  if (!enabled) {
+    await setDebugPanelVisible(false);
+    return;
+  }
+  addClientDebug('system', 'Debug panel initialized');
+  renderDebugPanel(true);
+  await setDebugPanelVisible(true);
+}
+
 function addClientDebug(kind, message, context = null) {
-  if (!debugFeatureEnabled) {
+  if (!debugUiEnabled) {
     return;
   }
   clientDebugEntries.push({
@@ -138,7 +206,7 @@ function formatDebugEntry(entry) {
 }
 
 function renderDebugPanel(force = false) {
-  if (!debugFeatureEnabled) {
+  if (!debugUiEnabled) {
     return;
   }
   const textField = $('debugLogText');
@@ -186,7 +254,7 @@ function renderDebugPanel(force = false) {
 }
 
 async function refreshDebugLog(showErrors = true) {
-  if (!debugFeatureEnabled) {
+  if (!debugUiEnabled) {
     return;
   }
   try {
@@ -222,7 +290,7 @@ function stopDebugPolling() {
 }
 
 async function setDebugPanelVisible(visible) {
-  if (!debugFeatureEnabled) {
+  if (!debugUiEnabled) {
     return;
   }
   const panel = $('debugLogPanel');
@@ -899,6 +967,13 @@ $('statusHistoryBtn').addEventListener('click', (e) => {
   $('statusHistoryPanel').classList.toggle('is-hidden');
 });
 
+const buildInfoButton = $('buildInfo');
+if (buildInfoButton) {
+  buildInfoButton.addEventListener('click', async () => {
+    await applyDebugUiState(!debugUiEnabled);
+  });
+}
+
 $('debugLogBtn').addEventListener('click', async (e) => {
   e.stopPropagation();
   $('statusHistoryPanel').classList.add('is-hidden');
@@ -941,12 +1016,12 @@ window.addEventListener('resize', () => {
 
 async function init() {
   await loadBuildInfo();
-  setDebugAvailability(debugFeatureEnabled);
+  debugUiEnabled = loadDebugUiPreference();
+  updateBuildInfoDisplay();
+  setDebugAvailability(debugUiEnabled);
   updateColumnsLabel();
-  if (debugFeatureEnabled) {
-    addClientDebug('system', 'Debug panel initialized');
-    renderDebugPanel();
-    await setDebugPanelVisible(true);
+  if (debugUiEnabled) {
+    await applyDebugUiState(true, false);
   }
   await loadFonts();
   await loadProfiles();
