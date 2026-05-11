@@ -2,7 +2,7 @@ services:
   timiniprint:
     # Release channel image is pinned on purpose.
     # Update this tag only on explicit release deploy requests.
-    image: ghcr.io/cfridgen/timiniwebprint:v0.1.0
+    image: ghcr.io/cfridgen/timiniwebprint:v1.0.0
     restart: unless-stopped
     privileged: true
     network_mode: host
@@ -13,6 +13,8 @@ services:
       APP_PORT: "8001"
       # Release keeps exporter enabled
       NODE_EXPORTER_ENABLED: "1"
+      # Release version label
+      APP_VERSION: "1.0.0"
       NODE_EXPORTER_ARGS: "--collector.disable-defaults --collector.cpu --collector.meminfo --collector.filesystem"
     volumes:
       # Share host DBus so bluetoothctl / bleak can reach host bluetoothd
