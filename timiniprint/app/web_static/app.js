@@ -432,6 +432,9 @@ function canUseFontForName(font) {
 }
 
 function syncTextToFontSummary() {
+  if (!debugUiEnabled) {
+    return;
+  }
   if (!$('syncFontToggle') || !$('syncFontToggle').checked) return;
   const selectedFont = fontByKey(selectedFontKey);
   const fontLabel = selectedFont ? selectedFont.label : 'No font selected';
