@@ -17,6 +17,7 @@ This fork keeps the original printing logic and focuses on making installation a
 - Dark wordmark: [thermoflow_wordmark_dark.png](thermoflow_wordmark_dark.png)
 - Light wordmark: [thermoflow_wordmark_light.png](thermoflow_wordmark_light.png)
 - App icon: [thermoflow_appicon.png](thermoflow_appicon.png)
+- Usage rules: [brand/BRAND_GUIDELINES.md](brand/BRAND_GUIDELINES.md)
 
 ## 1) What you can do with it (User Guide)
 
