@@ -37,7 +37,7 @@ Start the web app from source:
 python3 timiniprint_web.py
 ```
 
-Then open `http://127.0.0.1:8000` in your browser.
+Then open `http://127.0.0.1:8901` in your browser.
 
 ## Command line interface
 (the examples use Linux filenames)

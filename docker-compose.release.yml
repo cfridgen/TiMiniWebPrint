@@ -7,10 +7,10 @@ services:
     environment:
       # Bluetooth / DBus
       DBUS_SYSTEM_BUS_ADDRESS: "unix:path=/run/dbus/system_bus_socket"
-      # Development channel default port
-      APP_PORT: "8901"
-      # Disabled by default to avoid conflicts when release and dev run in parallel
-      NODE_EXPORTER_ENABLED: "0"
+      # Release channel port
+      APP_PORT: "8001"
+      # Release keeps exporter enabled
+      NODE_EXPORTER_ENABLED: "1"
       NODE_EXPORTER_ARGS: "--collector.disable-defaults --collector.cpu --collector.meminfo --collector.filesystem"
     volumes:
       # Share host DBus so bluetoothctl / bleak can reach host bluetoothd
