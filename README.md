@@ -1,4 +1,4 @@
-# TiMini Print - Docker Edition for End Users
+# tiMiniWebPrint - Docker Edition for End Users
 
 This project is a fork of the original TiMini Print by Dejniel:
 - Original repository: https://github.com/Dejniel/TiMini-Print
@@ -6,11 +6,11 @@ This project is a fork of the original TiMini Print by Dejniel:
 
 This fork keeps the original printing logic and focuses on making installation and daily usage easier for normal users who just want to print.
 
-![TiMini Print printer banner](EMX_040256.jpg)
+![tiMiniWebPrint printer banner](EMX_040256.jpg)
 
 ## 1) What you can do with it (User Guide)
 
-TiMini Print lets you print to many small Bluetooth thermal printers (cat printers, mini printers, sticker printers) directly from a browser.
+tiMiniWebPrint lets you print to many small Bluetooth thermal printers (cat printers, mini printers, sticker printers) directly from a browser.
 
 You can print:
 - Images: PNG, JPG, JPEG, GIF, BMP

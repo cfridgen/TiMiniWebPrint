@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is a **community fork** of [Dejniel's TiMini-Print](https://github.com/Dejniel/TiMini-Print) with production-ready enhancements. The fork maintains 100% compatibility with the original while adding targeted improvements for containerized deployments.
+**tiMiniWebPrint** is a **community fork** of [Dejniel's TiMini-Print](https://github.com/Dejniel/TiMini-Print) with production-ready enhancements. The fork maintains 100% compatibility with the original while adding targeted improvements for containerized deployments.
 
 ---
 
