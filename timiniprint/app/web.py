@@ -25,7 +25,7 @@ from ..rendering.converters.text import TextConverter
 from ..transport.bluetooth import BleakBluetoothConnector, BluetoothDiscovery
 from . import cli as cli_app
 
-app = FastAPI(title="ThermoFlow Print", version="0.1.0")
+app = FastAPI(title="ThermoFlow Print", version="1.2.0")
 WEB_STATIC_DIR = Path(__file__).with_name("web_static")
 FONT_DIR = WEB_STATIC_DIR / "fonts"
 DEFAULT_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
@@ -431,6 +431,12 @@ def index() -> str:
         .connect-indicator { width: 20px; height: 20px; border: 2.5px solid #d3dbe4; border-top-color: #0a84ff; border-radius: 50%; opacity: 0; transition: opacity 0.2s ease; }
         .connect-indicator.is-active { opacity: 1; animation: spin 0.8s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        #printerSection { position: relative; }
+        #printerBusyOverlay { position: absolute; inset: 0; z-index: 120; background: rgba(180,195,210,0.25); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; border-radius: 20px; }
+        #printerBusyOverlay.is-active { opacity: 1; pointer-events: all; }
+        .printer-busy-card { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.93); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; box-shadow: 0 8px 24px rgba(20,48,80,0.10); }
+        .printer-busy-spinner { width: 20px; height: 20px; border: 2.5px solid #d3dbe4; border-top-color: #0a84ff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        #printerBusyMessage { color: #13273e; font-size: 13px; font-weight: 600; }
         /* Busy overlay */
         #busyOverlay { position: fixed; inset: 0; z-index: 9999; background: rgba(180,195,210,0.25); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
         #busyOverlay.is-active { opacity: 1; pointer-events: all; }
@@ -479,7 +485,40 @@ def index() -> str:
         #fontSizeOverlay { min-width: 260px; }
         #fontOverlay { left: calc(100% + 12px); top: calc(100% + 10px); min-width: 420px; width: 420px; max-height: 430px; overflow-y: auto; overflow-x: hidden; }
 
-        .status-hub { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+        .status-hub { 
+            position: relative; 
+            display: flex; 
+            align-items: center; 
+            justify-content: flex-end; 
+            gap: 8px; 
+            flex-wrap: wrap; 
+            z-index: 10020;
+        }
+        .language-menu-wrapper {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+        }
+        #langToggleBtn {
+            position: relative;
+            width: 34px;
+            min-height: 34px;
+            margin: 0;
+            padding: 0;
+            border-radius: 50%;
+            font-size: 16px;
+            line-height: 1;
+            background: linear-gradient(180deg, #f5f8fd, #e8eef7);
+            color: #27415a;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            user-select: none;
+        }
+        #langToggleBtn.is-active {
+            box-shadow: inset 0 0 0 1px rgba(20, 115, 230, 0.18);
+        }
         .build-info {
             min-height: 34px;
             padding: 8px 10px;
@@ -517,17 +556,6 @@ def index() -> str:
             background: linear-gradient(180deg, #e6f1ff, #cfe2ff);
             color: var(--primary-strong);
         }
-        #langToggleBtn {
-            width: 34px;
-            min-height: 34px;
-            margin: 0;
-            padding: 0;
-            border-radius: 50%;
-            font-size: 16px;
-            line-height: 1;
-            background: linear-gradient(180deg, #f5f8fd, #e8eef7);
-            color: #27415a;
-        }
         #debugLogBtn {
             display: none;
         }
@@ -542,6 +570,33 @@ def index() -> str:
             background: rgba(255,255,255,0.98);
             box-shadow: 0 18px 36px rgba(19, 39, 62, 0.18);
             padding: 10px 12px;
+        }
+        .language-menu-panel {
+            right: auto;
+            left: 0;
+            width: 210px;
+            padding: 10px;
+            display: grid;
+            gap: 6px;
+            z-index: 10030;
+        }
+        .language-menu-option {
+            width: 100%;
+            margin: 0;
+            min-height: 34px;
+            border-radius: 10px;
+            text-align: left;
+            padding: 8px 10px;
+            font-size: 13px;
+            background: #f4f8fd;
+            color: #334a60;
+            border: 1px solid #dbe7f3;
+        }
+        .language-menu-option.is-active {
+            background: #e7f0ff;
+            color: #0c3e79;
+            border-color: #bfd6f4;
+            font-weight: 700;
         }
         .status-history-panel.is-hidden { display: none; }
         .status-history-title { font-size: 12px; font-weight: 700; color: #3d4a58; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.03em; }
@@ -662,7 +717,15 @@ def index() -> str:
                     <p>Fast browser workflow for scan, preview, and label printing.</p>
                 </div>
                                 <div class=\"status-hub\">
-                                    <button id=\"langToggleBtn\" type=\"button\" title=\"Switch language\">🇬🇧</button>
+                                    <div id=\"languageMenuWrapper\" class=\"language-menu-wrapper\">
+                                        <button id=\"langToggleBtn\" type=\"button\" title=\"Switch language\">🇬🇧</button>
+                                        <div id=\"languageMenuPanel\" class=\"status-history-panel language-menu-panel\" role=\"menu\" aria-label=\"Language\">
+                                            <div id=\"languageMenuTitle\" class=\"status-history-title\">Language</div>
+                                            <button id=\"langOptionDe\" type=\"button\" class=\"language-menu-option\" role=\"menuitemradio\" aria-checked=\"false\">🇩🇪 Deutsch</button>
+                                            <button id=\"langOptionEn\" type=\"button\" class=\"language-menu-option\" role=\"menuitemradio\" aria-checked=\"true\">🇬🇧 English</button>
+                                            <button id=\"langOptionFr\" type=\"button\" class=\"language-menu-option\" role=\"menuitemradio\" aria-checked=\"false\">🇫🇷 Français</button>
+                                        </div>
+                                    </div>
                                     <div id=\"buildInfo\" class=\"build-info\">D</div>
                                         <button id=\"statusHistoryBtn\" type=\"button\" title=\"Show recent status messages\">i</button>
                                     <button id=\"debugLogBtn\" type=\"button\" title=\"Toggle runtime debug log\">Debug</button>
@@ -687,7 +750,7 @@ def index() -> str:
                     <textarea id="debugLogText" class="debug-log-text" readonly spellcheck="false">No debug entries yet.</textarea>
                 </div>
             </div>
-            <div class=\"section section-card\">
+            <div id=\"printerSection\" class=\"section section-card\">
                 <label for=\"deviceSelect\">Printer</label>
                 <div class=\"device-row\">
                     <select id=\"deviceSelect\"></select>
@@ -696,6 +759,12 @@ def index() -> str:
                     <span id=\"connectSpinner\" class=\"connect-indicator\" title=\"Connecting\"></span>
                 </div>
                 <div id=\"connectionState\">Not connected.</div>
+                <div id=\"printerBusyOverlay\">
+                    <div class=\"printer-busy-card\">
+                        <div class=\"printer-busy-spinner\"></div>
+                        <div id=\"printerBusyMessage\">Scanning / connecting printer…</div>
+                    </div>
+                </div>
             </div>
 
             <div class=\"section section-card\">
@@ -756,7 +825,7 @@ def index() -> str:
     </div>
   </div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=20260515h"></script>
 </body>
 </html>"""
 

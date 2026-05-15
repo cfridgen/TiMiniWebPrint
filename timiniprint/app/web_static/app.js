@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-let I18N = { en: {}, de: {} };
+let I18N = { en: {}, de: {}, fr: {} };
 
 let connectedTarget = null;
 let connectedProfileKey = null;
@@ -13,7 +13,8 @@ let previousColumnsValue = null;
 let previewDebounceTimer = null;
 let statusHideTimer = null;
 let statusHistory = [];
-let busyLockCount = 0;
+let busyWaitCount = 0;
+let busyPrintCount = 0;
 let isPrinting = false;
 let printAbortController = null;
 let debugEntries = [];
@@ -28,6 +29,22 @@ let buildInfoState = {
 };
 let currentLanguage = 'en';
 
+function readStoredLanguage() {
+  try {
+    return localStorage.getItem('selectedLanguage');
+  } catch (_err) {
+    return null;
+  }
+}
+
+function storeSelectedLanguage(language) {
+  try {
+    localStorage.setItem('selectedLanguage', language);
+  } catch (_err) {
+    // Ignore storage failures; language switching must keep working.
+  }
+}
+
 function t(key, vars = {}) {
   const selected = I18N[currentLanguage] || I18N.en;
   let value = selected[key] || I18N.en[key] || key;
@@ -38,14 +55,21 @@ function t(key, vars = {}) {
 }
 
 function detectInitialLanguage() {
+  const savedLang = readStoredLanguage();
+  if (savedLang && ['de', 'en', 'fr'].includes(savedLang)) {
+    return savedLang;
+  }
   const browserLang = String(navigator.language || '').toLowerCase();
-  return browserLang.startsWith('de') ? 'de' : 'en';
+  if (browserLang.startsWith('de')) return 'de';
+  if (browserLang.startsWith('fr')) return 'fr';
+  return 'en';
 }
 
 async function loadTranslations() {
-  const [enResponse, deResponse] = await Promise.all([
+  const [enResponse, deResponse, frResponse] = await Promise.all([
     fetch('/static/i18n/en.json'),
     fetch('/static/i18n/de.json'),
+    fetch('/static/i18n/fr.json'),
   ]);
 
   if (enResponse.ok) {
@@ -53,6 +77,9 @@ async function loadTranslations() {
   }
   if (deResponse.ok) {
     I18N.de = await deResponse.json();
+  }
+  if (frResponse.ok) {
+    I18N.fr = await frResponse.json();
   }
 }
 
@@ -91,6 +118,10 @@ function applyStaticTranslations() {
   $('busyMessage').textContent = t('busy.pleaseWait');
   $('busyHideBtn').textContent = t('busy.hide');
   $('busyCancelBtn').textContent = t('busy.cancel');
+  const printerBusyMessage = $('printerBusyMessage');
+  if (printerBusyMessage) {
+    printerBusyMessage.textContent = t('busy.scanningConnecting');
+  }
   $('statusToastText').textContent = t('status.ready');
   $('refreshBtn').textContent = t('printer.refresh');
   $('fontBtn').textContent = t('font.button');
@@ -113,6 +144,22 @@ function applyStaticTranslations() {
   $('statusHistoryBtn').title = t('status.historyTitle');
   $('debugLogBtn').title = t('debug.buttonTitle');
   $('connectSpinner').title = t('printer.spinner');
+    const langMenuTitle = $('languageMenuTitle');
+    if (langMenuTitle) {
+      langMenuTitle.textContent = t('lang.menuTitle');
+    }
+    const langOptionDe = $('langOptionDe');
+    if (langOptionDe) {
+      langOptionDe.textContent = `🇩🇪 ${t('lang.german')}`;
+    }
+    const langOptionEn = $('langOptionEn');
+    if (langOptionEn) {
+      langOptionEn.textContent = `🇬🇧 ${t('lang.english')}`;
+    }
+    const langOptionFr = $('langOptionFr');
+    if (langOptionFr) {
+      langOptionFr.textContent = `🇫🇷 ${t('lang.french')}`;
+    }
 }
 
 function updateLanguageToggle() {
@@ -120,18 +167,90 @@ function updateLanguageToggle() {
   if (!btn) return;
   if (currentLanguage === 'de') {
     btn.textContent = '🇩🇪';
-    btn.title = t('lang.toEnglish');
+  } else if (currentLanguage === 'fr') {
+    btn.textContent = '🇫🇷';
   } else {
     btn.textContent = '🇬🇧';
-    btn.title = t('lang.toGerman');
+  }
+  btn.title = t('lang.switch');
+  btn.setAttribute('aria-label', t('lang.switch'));
+}
+
+function setLanguageMenuVisible(visible) {
+  const wrapper = $('languageMenuWrapper');
+  const panel = $('languageMenuPanel');
+  const btn = $('langToggleBtn');
+  if (!wrapper || !panel || !btn) {
+    console.warn('Language menu wrapper/panel/button not found');
+    return;
+  }
+  panel.classList.toggle('is-hidden', !visible);
+  btn.classList.toggle('is-active', visible);
+  btn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+}
+
+function updateLanguageMenuState() {
+  const langOptionDe = $('langOptionDe');
+  const langOptionEn = $('langOptionEn');
+  const langOptionFr = $('langOptionFr');
+  
+  if (langOptionDe) {
+    const isActive = currentLanguage === 'de';
+    if (isActive) {
+      langOptionDe.classList.add('is-active');
+      langOptionDe.setAttribute('aria-checked', 'true');
+    } else {
+      langOptionDe.classList.remove('is-active');
+      langOptionDe.setAttribute('aria-checked', 'false');
+    }
+  }
+  if (langOptionEn) {
+    const isActive = currentLanguage === 'en';
+    if (isActive) {
+      langOptionEn.classList.add('is-active');
+      langOptionEn.setAttribute('aria-checked', 'true');
+    } else {
+      langOptionEn.classList.remove('is-active');
+      langOptionEn.setAttribute('aria-checked', 'false');
+    }
+  }
+  if (langOptionFr) {
+    const isActive = currentLanguage === 'fr';
+    if (isActive) {
+      langOptionFr.classList.add('is-active');
+      langOptionFr.setAttribute('aria-checked', 'true');
+    } else {
+      langOptionFr.classList.remove('is-active');
+      langOptionFr.setAttribute('aria-checked', 'false');
+    }
   }
 }
 
+function initLanguageMenu() {
+  const wrapper = $('languageMenuWrapper');
+  const btn = $('langToggleBtn');
+  const panel = $('languageMenuPanel');
+  if (!wrapper || !btn || !panel) {
+    console.warn('Language menu elements not found during init');
+    return;
+  }
+  setLanguageMenuVisible(false);
+  updateLanguageMenuState();
+}
+
 function setLanguage(language) {
-  currentLanguage = language === 'de' ? 'de' : 'en';
+  if (language === 'de') {
+    currentLanguage = 'de';
+  } else if (language === 'fr') {
+    currentLanguage = 'fr';
+  } else {
+    currentLanguage = 'en';
+  }
+  storeSelectedLanguage(currentLanguage);
   document.documentElement.lang = currentLanguage;
   applyStaticTranslations();
   updateLanguageToggle();
+  updateLanguageMenuState();
   updateColumnsLabel();
   updateFontSummary();
   renderFontOptions();
@@ -494,32 +613,55 @@ function setConnectionState(text, stateClass = '') {
 }
 
 function setBusy(active, msg = t('busy.pleaseWait'), mode = 'wait') {
-  const overlay = $('busyOverlay');
-  const msgEl = $('busyMessage');
+  const globalOverlay = $('busyOverlay');
+  const globalMsgEl = $('busyMessage');
   const cancelBtn = $('busyCancelBtn');
-  if (!overlay) return;
-  if (msgEl) msgEl.textContent = msg;
-  if (cancelBtn) {
-    cancelBtn.classList.toggle('is-hidden', mode !== 'print');
+  const printerOverlay = $('printerBusyOverlay');
+  const printerMsgEl = $('printerBusyMessage');
+
+  if (mode === 'print') {
+    if (!globalOverlay) return;
+    if (globalMsgEl) globalMsgEl.textContent = msg;
+    if (cancelBtn) {
+      cancelBtn.classList.toggle('is-hidden', false);
+    }
+    if (active) {
+      globalOverlay.classList.remove('is-force-hidden');
+    }
+    globalOverlay.classList.toggle('is-active', active);
+    if (!active) {
+      globalOverlay.classList.remove('is-force-hidden');
+    }
+    return;
   }
-  if (active) {
-    overlay.classList.remove('is-force-hidden');
-  }
-  overlay.classList.toggle('is-active', active);
-  if (!active) {
-    overlay.classList.remove('is-force-hidden');
+
+  if (printerMsgEl) printerMsgEl.textContent = msg;
+  if (printerOverlay) {
+    printerOverlay.classList.toggle('is-active', active);
   }
 }
 
 function beginBusy(msg, mode = 'wait') {
-  busyLockCount += 1;
+  if (mode === 'print') {
+    busyPrintCount += 1;
+  } else {
+    busyWaitCount += 1;
+  }
   setBusy(true, msg, mode);
 }
 
-function endBusy() {
-  busyLockCount = Math.max(0, busyLockCount - 1);
-  if (busyLockCount === 0) {
-    setBusy(false);
+function endBusy(mode = 'wait') {
+  if (mode === 'print') {
+    busyPrintCount = Math.max(0, busyPrintCount - 1);
+    if (busyPrintCount === 0) {
+      setBusy(false, t('busy.pleaseWait'), 'print');
+    }
+    return;
+  }
+
+  busyWaitCount = Math.max(0, busyWaitCount - 1);
+  if (busyWaitCount === 0) {
+    setBusy(false, t('busy.pleaseWait'), 'wait');
   }
 }
 
@@ -528,7 +670,7 @@ function setConnecting(active) {
   if (active) {
     beginBusy(t('busy.scanningConnecting'), 'wait');
   } else {
-    endBusy();
+    endBusy('wait');
   }
   const spinner = $('connectSpinner');
   const connectBtn = $('connectBtn');
@@ -858,7 +1000,7 @@ async function loadProfiles() {
     setConnectionState(t('connection.scanFailed'), 'is-error');
     updateConnectButtonState();
   } finally {
-    endBusy();
+    endBusy('wait');
   }
 }
 
@@ -1003,6 +1145,17 @@ document.addEventListener('click', (e) => {
       !shp.contains(e.target) && e.target !== shb) {
     shp.classList.add('is-hidden');
   }
+
+  const lmw = $('languageMenuWrapper');
+  const lmp = $('languageMenuPanel');
+  const ltb = $('langToggleBtn');
+  if (lmw && lmp && ltb && !lmp.classList.contains('is-hidden')) {
+    const clickedInsidePanel = lmp.contains(e.target);
+    const clickedToggle = ltb.contains(e.target);
+    if (!clickedInsidePanel && !clickedToggle) {
+      setLanguageMenuVisible(false);
+    }
+  }
 });
 
 async function renderPreview(manual = false) {
@@ -1075,7 +1228,7 @@ $('printBtn').addEventListener('click', async () => {
     printAbortController = null;
     $('printBtn').disabled = false;
     $('printBtn').textContent = t('print.label');
-    endBusy();
+    endBusy('print');
   }
 });
 
@@ -1163,9 +1316,43 @@ $('debugClearBtn').addEventListener('click', async (e) => {
   }
 });
 
-$('langToggleBtn')?.addEventListener('click', () => {
-  setLanguage(currentLanguage === 'de' ? 'en' : 'de');
-});
+// Bind language menu handlers explicitly (not optional chaining)
+function setupLanguageMenuHandlers() {
+  const btn = $('langToggleBtn');
+  const optDe = $('langOptionDe');
+  const optEn = $('langOptionEn');
+  const optFr = $('langOptionFr');
+  const panel = $('languageMenuPanel');
+  
+  if (!btn || !optDe || !optEn || !optFr || !panel) {
+    console.error('Language menu elements missing: btn=' + !!btn + ', optDe=' + !!optDe + ', optEn=' + !!optEn + ', optFr=' + !!optFr + ', panel=' + !!panel);
+    return;
+  }
+
+  btn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    const isOpen = !panel.classList.contains('is-hidden');
+    setLanguageMenuVisible(!isOpen);
+  });
+
+  optDe.addEventListener('click', function(e) {
+    e.stopPropagation();
+    setLanguage('de');
+    setLanguageMenuVisible(false);
+  });
+
+  optEn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    setLanguage('en');
+    setLanguageMenuVisible(false);
+  });
+
+  optFr.addEventListener('click', function(e) {
+    e.stopPropagation();
+    setLanguage('fr');
+    setLanguageMenuVisible(false);
+  });
+}
 
 window.addEventListener('resize', () => {
   positionFontOverlay();
@@ -1174,6 +1361,8 @@ window.addEventListener('resize', () => {
 async function init() {
   await loadTranslations();
   setLanguage(detectInitialLanguage());
+  setupLanguageMenuHandlers();
+  initLanguageMenu();
   await setupDebugMode();
   updateColumnsLabel();
   await loadFonts();
