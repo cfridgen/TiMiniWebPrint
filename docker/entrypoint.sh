@@ -27,8 +27,9 @@ if [ "${NODE_EXPORTER_ENABLED}" = "1" ]; then
   node_exporter --web.listen-address="${NODE_EXPORTER_ADDR}" ${NODE_EXPORTER_ARGS} &
 fi
 
-exec python -m uvicorn timiniprint.app.web:app \
-  --host "${APP_ADDR}" \
-  --port "${APP_PORT}" \
-  --log-level info \
-  --access-log
+export TIMINIPRINT_RELOAD="${TIMINIPRINT_RELOAD:-0}"
+export TIMINIPRINT_LOG_LEVEL="${TIMINIPRINT_LOG_LEVEL:-info}"
+export TIMINIPRINT_LOG_TO_STDOUT="${TIMINIPRINT_LOG_TO_STDOUT:-0}"
+export TIMINIPRINT_ACCESS_LOG="${TIMINIPRINT_ACCESS_LOG:-0}"
+
+exec python /app/timiniprint_web.py

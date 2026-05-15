@@ -6,6 +6,8 @@ binding plus family-aware write routing to `_BleakTransportSession`.
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from .base import _BleBluetoothAdapter
@@ -16,6 +18,15 @@ from ..types import DeviceInfo, DeviceTransport, SocketLike
 from .... import reporting
 from ....protocol.families import get_protocol_behavior
 from ....protocol.family import ProtocolFamily
+
+
+_BLE_SCAN_LOCK = threading.Lock()
+_BLE_SCAN_MAX_ATTEMPTS = 4
+_BLE_SCAN_RETRY_DELAY_SEC = 0.35
+_BLUEZ_IN_PROGRESS_MARKERS = (
+    "org.bluez.Error.InProgress",
+    "Operation already in progress",
+)
 
 
 def _missing_bleak_error() -> RuntimeError:
@@ -278,6 +289,11 @@ class _BleakBleAdapter(_BleBluetoothAdapter):
     def __init__(self) -> None:
         self._device_cache: Dict[str, Any] = {}
 
+    @staticmethod
+    def _is_bluez_in_progress_error(exc: Exception) -> bool:
+        detail = str(exc)
+        return any(marker in detail for marker in _BLUEZ_IN_PROGRESS_MARKERS)
+
     def scan_blocking(self, timeout: float) -> List[DeviceInfo]:
         try:
             from bleak import BleakScanner
@@ -300,17 +316,33 @@ class _BleakBleAdapter(_BleBluetoothAdapter):
                 )
             return results
 
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        last_error: Exception | None = None
+        for attempt in range(1, _BLE_SCAN_MAX_ATTEMPTS + 1):
+            previous_loop = None
             try:
-                devices = loop.run_until_complete(scan())
+                try:
+                    previous_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    previous_loop = None
+                with _BLE_SCAN_LOCK:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        return loop.run_until_complete(scan())
+                    finally:
+                        loop.close()
+            except Exception as exc:
+                last_error = exc
+                if attempt >= _BLE_SCAN_MAX_ATTEMPTS or not self._is_bluez_in_progress_error(exc):
+                    raise RuntimeError(f"BLE scan failed: {exc}") from exc
+                time.sleep(_BLE_SCAN_RETRY_DELAY_SEC)
             finally:
-                loop.close()
-        except Exception as exc:
-            raise RuntimeError(f"BLE scan failed: {exc}") from exc
+                try:
+                    asyncio.set_event_loop(previous_loop)
+                except Exception:
+                    pass
 
-        return devices
+        raise RuntimeError(f"BLE scan failed: {last_error}")
 
     def create_socket(
         self,

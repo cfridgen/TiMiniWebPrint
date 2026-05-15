@@ -12,6 +12,7 @@ from ... import reporting
 
 _MACOS_FALLBACK_COOLDOWN_SEC = 0.35
 _MACOS_BLE_REFRESH_TIMEOUT_SEC = 3.0
+_SCAN_LOCK = threading.Lock()
 
 
 class SppBackend:
@@ -296,44 +297,47 @@ def _scan_blocking(
     include_classic: bool,
     include_ble: bool,
 ) -> Tuple[List[DeviceInfo], List[ScanFailure]]:
-    classic_devices: List[DeviceInfo] = []
-    ble_devices: List[DeviceInfo] = []
-    failures: List[ScanFailure] = []
-    classic_failure: Optional[Exception] = None
-    ble_failure: Optional[Exception] = None
-    attempts = 0
-    if include_classic:
-        attempts += 1
-        adapter = _get_classic_adapter()
-        if adapter is None:
-            classic_failure = RuntimeError("Classic Bluetooth not supported")
-        else:
-            try:
-                classic_devices = adapter.scan_blocking(timeout)
-            except Exception as exc:
-                classic_failure = exc
-    if include_ble:
-        attempts += 1
-        adapter = _get_ble_adapter()
-        if adapter is None:
-            ble_failure = RuntimeError("BLE Bluetooth not supported")
-        else:
-            try:
-                ble_devices = adapter.scan_blocking(timeout)
-            except Exception as exc:
-                ble_failure = exc
+    # BlueZ discovery is sensitive to overlapping operations, so keep scan
+    # execution single-file within the process.
+    with _SCAN_LOCK:
+        classic_devices: List[DeviceInfo] = []
+        ble_devices: List[DeviceInfo] = []
+        failures: List[ScanFailure] = []
+        classic_failure: Optional[Exception] = None
+        ble_failure: Optional[Exception] = None
+        attempts = 0
+        if include_classic:
+            attempts += 1
+            adapter = _get_classic_adapter()
+            if adapter is None:
+                classic_failure = RuntimeError("Classic Bluetooth not supported")
+            else:
+                try:
+                    classic_devices = adapter.scan_blocking(timeout)
+                except Exception as exc:
+                    classic_failure = exc
+        if include_ble:
+            attempts += 1
+            adapter = _get_ble_adapter()
+            if adapter is None:
+                ble_failure = RuntimeError("BLE Bluetooth not supported")
+            else:
+                try:
+                    ble_devices = adapter.scan_blocking(timeout)
+                except Exception as exc:
+                    ble_failure = exc
 
-    if classic_failure:
-        failures.append(ScanFailure(DeviceTransport.CLASSIC, classic_failure))
-    if ble_failure:
-        failures.append(ScanFailure(DeviceTransport.BLE, ble_failure))
-    all_devices = classic_devices + ble_devices
-    if all_devices:
-        return DeviceInfo.dedupe(all_devices), failures
-    if attempts and failures and len(failures) >= attempts:
-        detail = "; ".join(f"{item.transport.value}: {item.error}" for item in failures)
-        raise RuntimeError(f"Bluetooth scan failed ({detail})")
-    return [], failures
+        if classic_failure:
+            failures.append(ScanFailure(DeviceTransport.CLASSIC, classic_failure))
+        if ble_failure:
+            failures.append(ScanFailure(DeviceTransport.BLE, ble_failure))
+        all_devices = classic_devices + ble_devices
+        if all_devices:
+            return DeviceInfo.dedupe(all_devices), failures
+        if attempts and failures and len(failures) >= attempts:
+            detail = "; ".join(f"{item.transport.value}: {item.error}" for item in failures)
+            raise RuntimeError(f"Bluetooth scan failed ({detail})")
+        return [], failures
 
 
 def _select_adapter(transport: DeviceTransport):
@@ -414,7 +418,8 @@ def _resolve_rfcomm_channels(adapter, address: str) -> List[int]:
     if explicit_channels:
         return explicit_channels
 
-    return [RFCOMM_CHANNELS[0]]
+    # If SDP lookup yields no explicit channel, probe common RFCOMM defaults.
+    return list(RFCOMM_CHANNELS)
 
 
 def _transport_label(transport: DeviceTransport) -> str:

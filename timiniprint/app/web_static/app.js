@@ -1,4 +1,6 @@
 const $ = (id) => document.getElementById(id);
+let I18N = { en: {}, de: {} };
+
 let connectedTarget = null;
 let connectedProfileKey = null;
 let isConnecting = false;
@@ -10,7 +12,7 @@ let previousFontKey = null;
 let previousColumnsValue = null;
 let previewDebounceTimer = null;
 let statusHideTimer = null;
-let statusHistory = ['Ready.'];
+let statusHistory = [];
 let busyLockCount = 0;
 let isPrinting = false;
 let printAbortController = null;
@@ -20,10 +22,144 @@ let debugPollTimer = null;
 let debugRenderedText = '';
 let debugUiEnabled = false;
 let buildInfoState = {
-  version: 'n/a',
-  buildId: 'local',
+  version: '',
+  buildId: '',
   startedAt: '',
 };
+let currentLanguage = 'en';
+
+function t(key, vars = {}) {
+  const selected = I18N[currentLanguage] || I18N.en;
+  let value = selected[key] || I18N.en[key] || key;
+  Object.entries(vars).forEach(([name, raw]) => {
+    value = value.replaceAll(`{${name}}`, String(raw));
+  });
+  return value;
+}
+
+function detectInitialLanguage() {
+  const browserLang = String(navigator.language || '').toLowerCase();
+  return browserLang.startsWith('de') ? 'de' : 'en';
+}
+
+async function loadTranslations() {
+  const [enResponse, deResponse] = await Promise.all([
+    fetch('/static/i18n/en.json'),
+    fetch('/static/i18n/de.json'),
+  ]);
+
+  if (enResponse.ok) {
+    I18N.en = await enResponse.json();
+  }
+  if (deResponse.ok) {
+    I18N.de = await deResponse.json();
+  }
+}
+
+function applyStaticTranslations() {
+  const appTitle = document.querySelector('.hero h1');
+  const appSubtitle = document.querySelector('.hero p');
+  if (appTitle) appTitle.textContent = t('app.title');
+  if (appSubtitle) appSubtitle.textContent = t('app.subtitle');
+
+  const statusHistoryTitle = document.querySelector('#statusHistoryPanel .status-history-title');
+  if (statusHistoryTitle) statusHistoryTitle.textContent = t('status.recent');
+  const debugTitle = document.querySelector('#debugLogPanel .status-history-title');
+  if (debugTitle) debugTitle.textContent = t('debug.title');
+
+  const printerLabel = document.querySelector('label[for="deviceSelect"]');
+  if (printerLabel) printerLabel.textContent = t('printer.label');
+  const textLabel = document.querySelector('#syncFontToggleRow label[for="text"]');
+  if (textLabel) textLabel.textContent = t('text.label');
+  const autoFillRow = document.querySelector('#syncFontToggleRow label');
+  if (autoFillRow) {
+    const checkbox = autoFillRow.querySelector('input');
+    autoFillRow.innerHTML = '';
+    if (checkbox) autoFillRow.appendChild(checkbox);
+    autoFillRow.append(` ${t('text.autofill')}`);
+  }
+  const darknessLabel = document.querySelector('label[for="darkness"]');
+  if (darknessLabel) darknessLabel.textContent = t('darkness.label');
+
+  const fontOverlayTitle = document.querySelector('#fontOverlay .overlay-title');
+  if (fontOverlayTitle) fontOverlayTitle.textContent = t('font.title');
+  const sizeOverlayTitle = document.querySelector('#fontSizeOverlay .overlay-title');
+  if (sizeOverlayTitle) sizeOverlayTitle.textContent = t('font.size.title');
+  const smallHint = document.querySelector('#fontSizeOverlay .slider-hint');
+  if (smallHint) smallHint.textContent = t('font.small');
+
+  $('busyMessage').textContent = t('busy.pleaseWait');
+  $('busyHideBtn').textContent = t('busy.hide');
+  $('busyCancelBtn').textContent = t('busy.cancel');
+  $('statusToastText').textContent = t('status.ready');
+  $('refreshBtn').textContent = t('printer.refresh');
+  $('fontBtn').textContent = t('font.button');
+  $('fontSizeBtn').textContent = t('font.size.button');
+  $('fontCancelBtn').textContent = t('button.cancel');
+  $('fontOkBtn').textContent = t('button.ok');
+  $('fontSizeCancelBtn').textContent = t('button.cancel');
+  $('fontSizeOkBtn').textContent = t('button.ok');
+  $('previewBtn').textContent = t('preview.refresh');
+  if (!isPrinting) $('printBtn').textContent = t('print.label');
+  if (!isConnecting) $('connectBtn').textContent = t('printer.connect');
+  $('debugLogBtn').textContent = t('debug.button');
+  $('debugRefreshBtn').textContent = t('debug.refresh');
+  $('debugClearBtn').textContent = t('debug.clear');
+  $('debugLogMeta').textContent = t('debug.noEntriesYet');
+  if ($('debugLogText').value === '' || $('debugLogText').value === t('debug.noEntriesYet')) {
+    $('debugLogText').value = t('debug.noEntriesYet');
+  }
+
+  $('statusHistoryBtn').title = t('status.historyTitle');
+  $('debugLogBtn').title = t('debug.buttonTitle');
+  $('connectSpinner').title = t('printer.spinner');
+}
+
+function updateLanguageToggle() {
+  const btn = $('langToggleBtn');
+  if (!btn) return;
+  if (currentLanguage === 'de') {
+    btn.textContent = '🇩🇪';
+    btn.title = t('lang.toEnglish');
+  } else {
+    btn.textContent = '🇬🇧';
+    btn.title = t('lang.toGerman');
+  }
+}
+
+function setLanguage(language) {
+  currentLanguage = language === 'de' ? 'de' : 'en';
+  document.documentElement.lang = currentLanguage;
+  applyStaticTranslations();
+  updateLanguageToggle();
+  updateColumnsLabel();
+  updateFontSummary();
+  renderFontOptions();
+  _updateDebugUiDisplay();
+  if (!connectedTarget) {
+    setConnectionState(t('printer.notConnected'));
+  }
+  statusHistory = [t('status.ready')];
+  log(t('status.ready'));
+  renderDebugPanel(true);
+}
+
+function connectedBadge() {
+  return t('runtime.connectedBadge');
+}
+
+function localizeRuntimeText(text) {
+  let value = String(text);
+  const replacements = (I18N[currentLanguage] && I18N[currentLanguage]['runtime.replacements']) || [];
+  replacements.forEach((rule) => {
+    if (!rule || !rule.pattern) {
+      return;
+    }
+    const regex = new RegExp(rule.pattern, rule.flags || 'u');
+    value = value.replace(regex, rule.replacement || '');
+  });
+  return value;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -31,13 +167,13 @@ function nowIso() {
 
 function formatBuildTime(ts) {
   if (!ts) {
-    return 'unknown';
+    return t('meta.unknown');
   }
   const parsed = new Date(String(ts));
   if (Number.isNaN(parsed.getTime())) {
     return String(ts);
   }
-  return parsed.toLocaleString('de-DE', {
+  return parsed.toLocaleString(currentLanguage === 'de' ? 'de-DE' : 'en-US', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -75,7 +211,7 @@ async function toggleDebugMode() {
     return;
   }
   
-  addClientDebug('system', 'Debug panel initialized');
+  addClientDebug('system', t('log.debugInit'));
   renderDebugPanel(true);
   await setDebugPanelVisible(true);
 }
@@ -90,22 +226,22 @@ async function _loadBuildInfoFromBackend() {
     const res = await fetch('/api/build-info');
     if (!res.ok) {
       buildInfoState = {
-        version: 'n/a',
-        buildId: 'local',
+        version: '',
+        buildId: '',
         startedAt: '',
       };
       return;
     }
     const data = await res.json();
     buildInfoState = {
-      version: data && data.version ? String(data.version) : 'n/a',
-      buildId: data && data.build_id ? String(data.build_id) : 'local',
+      version: data && data.version ? String(data.version) : '',
+      buildId: data && data.build_id ? String(data.build_id) : '',
       startedAt: formatBuildTime(data && data.started_at ? data.started_at : ''),
     };
   } catch (_err) {
     buildInfoState = {
-      version: 'n/a',
-      buildId: 'local',
+      version: '',
+      buildId: '',
       startedAt: '',
     };
   }
@@ -118,14 +254,19 @@ function _updateDebugUiDisplay() {
     return;
   }
   if (!debugUiEnabled) {
-    el.textContent = 'D';
-    el.title = 'Enable debug mode';
+    el.textContent = t('debug.initialBadge');
+    el.title = t('debug.enableMode');
     el.classList.add('is-debug-toggle');
     return;
   }
   el.classList.remove('is-debug-toggle');
-  el.textContent = `v${buildInfoState.version} | ${buildInfoState.buildId} | ${buildInfoState.startedAt}`;
-  el.title = `Version: ${buildInfoState.version}\nBuild: ${buildInfoState.buildId}\nStarted: ${buildInfoState.startedAt}`;
+  const versionText = buildInfoState.version || t('meta.notAvailable');
+  const buildIdText = buildInfoState.buildId || t('meta.localBuild');
+  const startedText = buildInfoState.startedAt || t('meta.notAvailable');
+  el.textContent = `v${versionText} | ${buildIdText} | ${startedText}`;
+  el.title = currentLanguage === 'de'
+    ? `${t('debug.versionLabel')} ${versionText}\n${t('debug.buildLabel')} ${buildIdText}\n${t('debug.startedLabel')} ${startedText}`
+    : `${t('debug.versionLabel')} ${versionText}\n${t('debug.buildLabel')} ${buildIdText}\n${t('debug.startedLabel')} ${startedText}`;
 }
 
 // Private helper: Configure debug UI element visibility
@@ -175,7 +316,7 @@ function addClientDebug(kind, message, context = null) {
 }
 
 function log(msg) {
-  const text = String(msg || '');
+  const text = localizeRuntimeText(String(msg || ''));
   addClientDebug('ui', text);
   statusHistory.push(text);
   if (statusHistory.length > 5) {
@@ -230,25 +371,25 @@ function renderDebugPanel(force = false) {
   const latest = mergedEntries.length > 0 ? mergedEntries[mergedEntries.length - 1] : null;
   const nextText = mergedEntries.length > 0
     ? mergedEntries.map((entry) => formatDebugEntry(entry)).join('\n\n')
-    : 'No debug entries yet.';
+    : t('debug.noEntriesYet');
 
   const hasSelection = textField.selectionStart !== textField.selectionEnd;
   const isFocused = document.activeElement === textField;
   const preserveSelection = !force && isFocused && hasSelection;
 
   if (preserveSelection && nextText !== debugRenderedText) {
-    meta.textContent = `${mergedEntries.length} entries (latest: ${latest && latest.ts ? latest.ts : 'n/a'}, paused while selecting)`;
+    meta.textContent = `${mergedEntries.length} entries (latest: ${latest && latest.ts ? latest.ts : t('meta.notAvailable')}, paused while selecting)`;
     return;
   }
 
   if (mergedEntries.length === 0) {
     debugRenderedText = nextText;
     textField.value = nextText;
-    meta.textContent = 'No debug entries.';
+    meta.textContent = t('debug.noEntries');
     return;
   }
 
-  meta.textContent = `${mergedEntries.length} entries (latest: ${latest.ts || 'n/a'})`;
+  meta.textContent = `${mergedEntries.length} entries (latest: ${latest.ts || t('meta.notAvailable')})`;
 
   if (nextText !== debugRenderedText) {
     const oldScrollTop = textField.scrollTop;
@@ -319,7 +460,7 @@ async function setDebugPanelVisible(visible) {
   }
 
   if (meta) {
-    meta.textContent = 'Loading debug log...';
+    meta.textContent = t('debug.loading');
   }
   await refreshDebugLog(false);
   stopDebugPolling();
@@ -345,14 +486,14 @@ function updateConnectButtonState() {
 
 function setConnectionState(text, stateClass = '') {
   const el = $('connectionState');
-  el.textContent = text;
+  el.textContent = localizeRuntimeText(text);
   el.classList.remove('is-scanning', 'is-connected', 'is-error');
   if (stateClass) {
     el.classList.add(stateClass);
   }
 }
 
-function setBusy(active, msg = 'Bitte warten…', mode = 'wait') {
+function setBusy(active, msg = t('busy.pleaseWait'), mode = 'wait') {
   const overlay = $('busyOverlay');
   const msgEl = $('busyMessage');
   const cancelBtn = $('busyCancelBtn');
@@ -385,7 +526,7 @@ function endBusy() {
 function setConnecting(active) {
   isConnecting = active;
   if (active) {
-    beginBusy('Scanning / connecting printer…', 'wait');
+    beginBusy(t('busy.scanningConnecting'), 'wait');
   } else {
     endBusy();
   }
@@ -394,11 +535,11 @@ function setConnecting(active) {
   if (active) {
     spinner.classList.add('is-active');
     connectBtn.disabled = true;
-    connectBtn.textContent = 'Connecting...';
+    connectBtn.textContent = t('printer.connecting');
     return;
   }
   spinner.classList.remove('is-active');
-  connectBtn.textContent = 'Connect';
+  connectBtn.textContent = t('printer.connect');
   updateConnectButtonState();
 }
 
@@ -412,7 +553,7 @@ function upsertConnectedOption(target, profileKey, labelText) {
   }
   option.dataset.profileKey = profileKey || option.dataset.profileKey || '';
   option.dataset.connected = 'true';
-  option.textContent = labelText;
+  option.textContent = localizeRuntimeText(labelText);
   select.value = target;
 }
 
@@ -443,10 +584,10 @@ function fontByKey(fontKey) {
 
 function describeFont(font) {
   if (!font) {
-    return 'Default built-in font';
+    return t('font.defaultBuiltIn');
   }
-  const family = font.family === 'serif' ? 'Serif' : 'Sans';
-  const width = font.width === 'fixed' ? 'Fixed width' : 'Variable width';
+  const family = font.family === 'serif' ? t('font.family.serif') : t('font.family.sans');
+  const width = font.width === 'fixed' ? t('font.width.fixed') : t('font.width.variable');
   return `${family}, ${width}`;
 }
 
@@ -468,13 +609,13 @@ function syncTextToFontSummary() {
   }
   if (!$('syncFontToggle') || !$('syncFontToggle').checked) return;
   const selectedFont = fontByKey(selectedFontKey);
-  const fontLabel = selectedFont ? selectedFont.label : 'No font selected';
+  const fontLabel = selectedFont ? selectedFont.label : t('font.noSelection');
   $('text').value = `${fontLabel}\n${currentColumnsValue()} cpl`;
 }
 
 function updateFontSummary() {
   const selectedFont = fontByKey(selectedFontKey);
-  $('fontLabel').textContent = selectedFont ? selectedFont.label : 'No font selected';
+  $('fontLabel').textContent = selectedFont ? selectedFont.label : t('font.noSelection');
   $('fontLabel').style.fontFamily = canUseFontForName(selectedFont)
     ? `${selectedFont.css_family}, sans-serif`
     : '';
@@ -486,10 +627,10 @@ function renderFontOptions() {
   const list = $('fontList');
   list.innerHTML = '';
   const groups = [
-    { title: 'Serif · Fixed Width', family: 'serif', width: 'fixed' },
-    { title: 'Serif · Variable Width', family: 'serif', width: 'variable' },
-    { title: 'Sans · Fixed Width', family: 'sans', width: 'fixed' },
-    { title: 'Sans · Variable Width', family: 'sans', width: 'variable' },
+    { title: t('font.group.serif.fixed'), family: 'serif', width: 'fixed' },
+    { title: t('font.group.serif.variable'), family: 'serif', width: 'variable' },
+    { title: t('font.group.sans.fixed'), family: 'sans', width: 'fixed' },
+    { title: t('font.group.sans.variable'), family: 'sans', width: 'variable' },
   ];
 
   groups.forEach((group) => {
@@ -521,7 +662,7 @@ function renderFontOptions() {
       option.innerHTML = `
         <div class="font-name" style="font-family: ${nameFont};">${font.label}</div>
         <div class="font-tags">${describeFont(font)}</div>
-        <div class="font-sample" style="font-family: ${font.css_family}, sans-serif;">ABC 123 | The quick brown fox</div>
+        <div class="font-sample" style="font-family: ${font.css_family}, sans-serif;">${t('font.sample')}</div>
       `;
       option.addEventListener('click', () => {
         pendingFontKey = font.key;
@@ -531,7 +672,7 @@ function renderFontOptions() {
         if (debugUiEnabled) {
           syncTextToFontSummary();
         }
-        renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
+        renderPreview(false).catch((err) => log(t('log.previewFailed', { error: err })));
       });
       grid.appendChild(option);
     });
@@ -589,12 +730,12 @@ async function loadFonts() {
       return;
     }
     if (!res.ok) {
-      log(`Font list failed: ${JSON.stringify(data)}`);
+      log(t('log.fontListFailed', { error: JSON.stringify(data) }));
       return;
     }
     fontCatalog = Array.isArray(data.fonts) ? data.fonts : [];
     if (fontCatalog.length === 0) {
-      log('No bundled fonts available.');
+      log(t('log.noBundledFonts'));
       return;
     }
     const defaultKey = data.default_font_key || fontCatalog[0].key;
@@ -602,7 +743,7 @@ async function loadFonts() {
     pendingFontKey = defaultKey;
     updateFontSummary();
   } catch (err) {
-    log(`Font list failed: ${err}`);
+    log(t('log.fontListFailed', { error: err }));
   }
 }
 
@@ -620,7 +761,7 @@ function schedulePreview() {
     clearTimeout(previewDebounceTimer);
   }
   previewDebounceTimer = setTimeout(() => {
-    renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
+    renderPreview(false).catch((err) => log(t('log.previewFailed', { error: err })));
   }, 120);
 }
 
@@ -637,8 +778,8 @@ async function loadProfiles() {
   if (isConnecting) {
     return;
   }
-  beginBusy('Scanning for printers…', 'wait');
-  setConnectionState('Scanning for printers...', 'is-scanning');
+  beginBusy(t('busy.scanning'), 'wait');
+  setConnectionState(t('connection.scanning'), 'is-scanning');
   const select = $('deviceSelect');
   try {
     const res = await fetch('/api/scan', {
@@ -651,8 +792,8 @@ async function loadProfiles() {
       return;
     }
     if (!res.ok) {
-      log(`Scan failed: ${JSON.stringify(data)}`);
-      setConnectionState('Scan failed.', 'is-error');
+      log(t('log.scanFailed', { error: JSON.stringify(data) }));
+      setConnectionState(t('connection.scanFailed'), 'is-error');
       return;
     }
 
@@ -662,8 +803,8 @@ async function loadProfiles() {
       opt.value = d.address;
       opt.dataset.profileKey = d.profile_key || '';
       opt.dataset.connected = d.connected ? 'true' : 'false';
-      const name = d.display_name || 'Unknown';
-      const badge = d.connected ? ' [connected]' : '';
+      const name = d.display_name || t('device.unknown');
+      const badge = d.connected ? ` ${connectedBadge()}` : '';
       opt.textContent = `${name} (${d.address}) ${d.transport_badge || ''}${badge}`.trim();
       select.appendChild(opt);
     });
@@ -683,9 +824,9 @@ async function loadProfiles() {
     if (data.devices.length === 0) {
       connectedTarget = null;
       connectedProfileKey = null;
-      setConnectionState('No supported printers found.', 'is-error');
+      setConnectionState(t('log.noSupportedPrinters'), 'is-error');
       updateConnectButtonState();
-      log('No supported printers found.');
+      log(t('log.noSupportedPrinters'));
       return;
     }
 
@@ -696,25 +837,25 @@ async function loadProfiles() {
       upsertConnectedOption(
         connectedTarget,
         connectedProfileKey,
-        `${active.display_name || connectedTarget} (${connectedTarget}) ${active.transport_badge || ''} [connected]`.trim()
+        `${active.display_name || connectedTarget} (${connectedTarget}) ${active.transport_badge || ''} ${connectedBadge()}`.trim()
       );
-      setConnectionState(`Connected: ${active.display_name || connectedTarget}`, 'is-connected');
+      setConnectionState(t('connection.connected', { name: active.display_name || connectedTarget }), 'is-connected');
       updateConnectButtonState();
-      log(`Using active printer: ${active.display_name || connectedTarget}.`);
+      log(t('log.usingActivePrinter', { name: active.display_name || connectedTarget }));
       return;
     }
 
     connectedTarget = null;
     connectedProfileKey = selectedDeviceProfile();
     updateConnectButtonState();
-    setConnectionState('Auto-connecting first detected printer...', 'is-scanning');
+    setConnectionState(t('connection.autoconnect'), 'is-scanning');
     await connectSelected(true);
     if (!connectedTarget) {
-      setConnectionState('Printer detected. Auto-connect failed, please click Connect.', 'is-error');
+      setConnectionState(t('connection.autoconnectFailed'), 'is-error');
     }
   } catch (err) {
-    log(`Scan failed: ${err}`);
-    setConnectionState('Scan failed.', 'is-error');
+    log(t('log.scanFailed', { error: err }));
+    setConnectionState(t('connection.scanFailed'), 'is-error');
     updateConnectButtonState();
   } finally {
     endBusy();
@@ -739,7 +880,7 @@ async function buildPrintPayload() {
 }
 
 $('refreshBtn').addEventListener('click', async () => {
-  log('Scanning for printers...');
+  log(t('connection.scanning'));
   await loadProfiles();
 });
 
@@ -747,13 +888,13 @@ async function connectSelected(autoConnect = false) {
   const target = selectedDeviceTarget();
   if (!target) {
     if (!autoConnect) {
-      log('No printer selected.');
+      log(t('log.noPrinterSelected'));
     }
     return;
   }
-  setConnectionState(autoConnect ? 'Auto-connecting first detected printer...' : 'Connecting selected printer...', 'is-scanning');
+  setConnectionState(autoConnect ? t('connection.autoconnect') : t('log.connecting'), 'is-scanning');
   setConnecting(true);
-  log(autoConnect ? 'Auto-connecting...' : 'Connecting...');
+  log(autoConnect ? t('log.autoConnecting') : t('log.connecting'));
   try {
     const res = await fetch('/api/connect', {
       method: 'POST',
@@ -765,8 +906,8 @@ async function connectSelected(autoConnect = false) {
       return;
     }
     if (!res.ok) {
-      log(`Connect failed: ${JSON.stringify(data)}`);
-      setConnectionState('Not connected.', 'is-error');
+      log(t('log.connectFailed', { error: JSON.stringify(data) }));
+      setConnectionState(t('printer.notConnected'), 'is-error');
       return;
     }
     connectedTarget = target;
@@ -774,14 +915,14 @@ async function connectSelected(autoConnect = false) {
     upsertConnectedOption(
       connectedTarget,
       connectedProfileKey,
-      `${data.display_name || target} (${connectedTarget}) ${data.transport_badge || ''} [connected]`.trim()
+      `${data.display_name || target} (${connectedTarget}) ${data.transport_badge || ''} ${connectedBadge()}`.trim()
     );
-    setConnectionState(`Connected: ${data.display_name || target}`, 'is-connected');
+    setConnectionState(t('connection.connected', { name: data.display_name || target }), 'is-connected');
     updateConnectButtonState();
-    log(`Connected to ${data.display_name || target}.`);
+    log(t('log.connectedTo', { name: data.display_name || target }));
   } catch (err) {
-    log(`Connect failed: ${err}`);
-    setConnectionState('Not connected.', 'is-error');
+    log(t('log.connectFailed', { error: err }));
+    setConnectionState(t('printer.notConnected'), 'is-error');
   } finally {
     setConnecting(false);
   }
@@ -808,7 +949,7 @@ $('fontSizeCancelBtn').addEventListener('click', (e) => {
   if (previousColumnsValue !== null) {
     $('columns').value = String(previousColumnsValue);
     updateColumnsLabel();
-    renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
+    renderPreview(false).catch((err) => log(t('log.previewFailed', { error: err })));
   }
 });
 
@@ -816,7 +957,7 @@ $('fontSizeOkBtn').addEventListener('click', (e) => {
   e.stopPropagation();
   $('fontSizeOverlay').classList.add('is-hidden');
   updateColumnsLabel();
-  renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
+  renderPreview(false).catch((err) => log(t('log.previewFailed', { error: err })));
 });
 
 $('fontBtn').addEventListener('click', (e) => {
@@ -835,7 +976,7 @@ $('fontCancelBtn').addEventListener('click', (e) => {
   pendingFontKey = previousFontKey;
   updateFontSummary();
   setFontPanelVisible(false);
-  renderPreview(false).catch((err) => log(`Preview failed: ${err}`));
+  renderPreview(false).catch((err) => log(t('log.previewFailed', { error: err })));
 });
 
 $('fontOkBtn').addEventListener('click', (e) => {
@@ -866,7 +1007,7 @@ document.addEventListener('click', (e) => {
 
 async function renderPreview(manual = false) {
   if (manual) {
-    log('Rendering preview...');
+    log(t('log.renderingPreview'));
   }
   const requestId = ++previewRequestSeq;
   try {
@@ -880,7 +1021,7 @@ async function renderPreview(manual = false) {
       return;
     }
     if (!res.ok) {
-      log(`Preview failed: ${JSON.stringify(data)}`);
+      log(t('log.previewFailed', { error: JSON.stringify(data) }));
       return;
     }
     // Ignore stale responses when user types quickly and newer requests are in flight.
@@ -889,23 +1030,23 @@ async function renderPreview(manual = false) {
     }
     $('preview').src = data.image_data;
     $('preview').classList.add('is-visible');
-    log(`Preview ready (${data.width}x${data.height}).`);
+    log(t('log.previewReady', { width: data.width, height: data.height }));
   } catch (err) {
-    log(`Preview failed: ${err}`);
+    log(t('log.previewFailed', { error: err }));
   }
 }
 
 $('printBtn').addEventListener('click', async () => {
   if (isPrinting) {
-    log('Print already in progress.');
+    log(t('log.printInProgress'));
     return;
   }
-  log('Printing...');
+  log(t('log.printing'));
   isPrinting = true;
   printAbortController = new AbortController();
   $('printBtn').disabled = true;
-  $('printBtn').textContent = 'Printing...';
-  beginBusy('Printing…', 'print');
+  $('printBtn').textContent = t('print.printing');
+  beginBusy(t('busy.printing'), 'print');
   try {
     const payload = await buildPrintPayload();
     const res = await fetch('/api/print', {
@@ -919,21 +1060,21 @@ $('printBtn').addEventListener('click', async () => {
       return;
     }
     if (!res.ok) {
-      log(`Print failed: ${JSON.stringify(data)}`);
+      log(t('log.printFailed', { error: JSON.stringify(data) }));
       return;
     }
     log(data.message);
   } catch (err) {
     if (err && err.name === 'AbortError') {
-      log('Print request cancelled. Printer may continue if it already started.');
+      log(t('log.printCancelled'));
       return;
     }
-    log(`Print failed: ${err}`);
+    log(t('log.printFailed', { error: err }));
   } finally {
     isPrinting = false;
     printAbortController = null;
     $('printBtn').disabled = false;
-    $('printBtn').textContent = 'Print Label';
+    $('printBtn').textContent = t('print.label');
     endBusy();
   }
 });
@@ -945,11 +1086,11 @@ $('busyHideBtn').addEventListener('click', () => {
 $('busyCancelBtn').addEventListener('click', () => {
   $('busyOverlay').classList.add('is-force-hidden');
   if (isPrinting && printAbortController) {
-    log('Cancelling print request...');
+    log(t('log.cancellingPrint'));
     try {
       printAbortController.abort();
     } catch (err) {
-      log(`Cancel request failed: ${err}`);
+      log(t('log.cancelFailed', { error: err }));
     }
   }
 });
@@ -1012,14 +1153,18 @@ $('debugClearBtn').addEventListener('click', async (e) => {
       return;
     }
     if (!res.ok) {
-      log(`Debug clear failed: ${JSON.stringify(data)}`);
+      log(t('log.debugClearFailed', { error: JSON.stringify(data) }));
       return;
     }
-    log(data.message || 'Debug log cleared.');
+    log(data.message || t('log.debugCleared'));
     await refreshDebugLog(false);
   } catch (err) {
-    log(`Debug clear failed: ${err}`);
+    log(t('log.debugClearFailed', { error: err }));
   }
+});
+
+$('langToggleBtn')?.addEventListener('click', () => {
+  setLanguage(currentLanguage === 'de' ? 'en' : 'de');
 });
 
 window.addEventListener('resize', () => {
@@ -1027,6 +1172,8 @@ window.addEventListener('resize', () => {
 });
 
 async function init() {
+  await loadTranslations();
+  setLanguage(detectInitialLanguage());
   await setupDebugMode();
   updateColumnsLabel();
   await loadFonts();

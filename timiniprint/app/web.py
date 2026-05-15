@@ -11,6 +11,7 @@ import tempfile
 import time
 from collections import deque
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -24,9 +25,13 @@ from ..rendering.converters.text import TextConverter
 from ..transport.bluetooth import BleakBluetoothConnector, BluetoothDiscovery
 from . import cli as cli_app
 
-app = FastAPI(title="TiMini Web Print", version="0.1.0")
+app = FastAPI(title="ThermoFlow Print", version="0.1.0")
 WEB_STATIC_DIR = Path(__file__).with_name("web_static")
 FONT_DIR = WEB_STATIC_DIR / "fonts"
+DEFAULT_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
+LOG_DIR = Path(os.environ.get("TIMINIPRINT_LOG_DIR", str(DEFAULT_LOG_DIR)))
+WEB_LOG_PATH = LOG_DIR / "webserver.log"
+ACCESS_LOG_PATH = LOG_DIR / "access.log"
 FONT_CATALOG: dict[str, dict[str, str]] = {
     "inter_variable": {
         "label": "Inter",
@@ -103,12 +108,70 @@ DEFAULT_FONT_KEY = "roboto_mono_variable"
 
 app.mount("/static", StaticFiles(directory=WEB_STATIC_DIR), name="static")
 logger = logging.getLogger("timiniprint.web")
+access_logger = logging.getLogger("timiniprint.access")
 _active_printer: dict[str, str] | None = None
 _debug_events: deque[dict[str, object]] = deque(maxlen=300)
 _DEBUG_FEATURE_ENABLED = True
 _NOISY_HTTP_PATHS = {"/api/debug/logs"}
 _APP_STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 _APP_BUILD_ID = (os.environ.get("TIMINIPRINT_BUILD") or os.environ.get("TIMINIPRINT_IMAGE_TAG") or "").strip()
+
+
+def _ensure_log_dir() -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _build_file_handler(path: Path) -> RotatingFileHandler:
+    handler = RotatingFileHandler(path, maxBytes=2_000_000, backupCount=5, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    return handler
+
+
+def _configure_file_logging() -> None:
+    _ensure_log_dir()
+
+    web_logger = logging.getLogger("timiniprint.web")
+    if not any(
+        isinstance(handler, RotatingFileHandler) and Path(getattr(handler, "baseFilename", "")) == WEB_LOG_PATH
+        for handler in web_logger.handlers
+    ):
+        web_logger.handlers.clear()
+        web_logger.addHandler(_build_file_handler(WEB_LOG_PATH))
+    web_logger.setLevel(logging.INFO)
+    web_logger.propagate = False
+
+    request_logger = logging.getLogger("timiniprint.access")
+    if not any(
+        isinstance(handler, RotatingFileHandler) and Path(getattr(handler, "baseFilename", "")) == ACCESS_LOG_PATH
+        for handler in request_logger.handlers
+    ):
+        request_logger.handlers.clear()
+        request_logger.addHandler(_build_file_handler(ACCESS_LOG_PATH))
+    request_logger.setLevel(logging.INFO)
+    request_logger.propagate = False
+
+    uvicorn_error_logger = logging.getLogger("uvicorn.error")
+    if not any(
+        isinstance(handler, RotatingFileHandler) and Path(getattr(handler, "baseFilename", "")) == WEB_LOG_PATH
+        for handler in uvicorn_error_logger.handlers
+    ):
+        uvicorn_error_logger.handlers.clear()
+        uvicorn_error_logger.addHandler(_build_file_handler(WEB_LOG_PATH))
+    uvicorn_error_logger.setLevel(logging.INFO)
+    uvicorn_error_logger.propagate = False
+
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+    if not any(
+        isinstance(handler, RotatingFileHandler) and Path(getattr(handler, "baseFilename", "")) == ACCESS_LOG_PATH
+        for handler in uvicorn_access_logger.handlers
+    ):
+        uvicorn_access_logger.handlers.clear()
+        uvicorn_access_logger.addHandler(_build_file_handler(ACCESS_LOG_PATH))
+    uvicorn_access_logger.setLevel(logging.INFO)
+    uvicorn_access_logger.propagate = False
+
+
+_configure_file_logging()
 
 
 class _SuppressUvicornAccessPathFilter(logging.Filter):
@@ -174,7 +237,7 @@ async def log_http_requests(request, call_next):
         raise
     duration_ms = (time.perf_counter() - started) * 1000
     if path not in _NOISY_HTTP_PATHS:
-        logger.info(
+        access_logger.info(
             "HTTP %s %s -> %s in %.1fms",
             request.method,
             path,
@@ -256,7 +319,7 @@ def index() -> str:
 <head>
     <meta charset=\"utf-8\" />
     <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
-    <title>TiMini Web Print</title>
+    <title>ThermoFlow Print</title>
     <link rel=\"icon\" type=\"image/svg+xml\" href=\"/static/favicon.svg\" />
     <style>
         @font-face { font-family: \"WebFontInter\"; src: url(\"/static/fonts/Inter-Variable.ttf\") format(\"truetype\"); }
@@ -454,6 +517,17 @@ def index() -> str:
             background: linear-gradient(180deg, #e6f1ff, #cfe2ff);
             color: var(--primary-strong);
         }
+        #langToggleBtn {
+            width: 34px;
+            min-height: 34px;
+            margin: 0;
+            padding: 0;
+            border-radius: 50%;
+            font-size: 16px;
+            line-height: 1;
+            background: linear-gradient(180deg, #f5f8fd, #e8eef7);
+            color: #27415a;
+        }
         #debugLogBtn {
             display: none;
         }
@@ -584,10 +658,11 @@ def index() -> str:
     <div class=\"card\">
             <div class=\"hero\">
                 <div>
-                    <h1>TiMini Web Print</h1>
+                    <h1>ThermoFlow Print</h1>
                     <p>Fast browser workflow for scan, preview, and label printing.</p>
                 </div>
                                 <div class=\"status-hub\">
+                                    <button id=\"langToggleBtn\" type=\"button\" title=\"Switch language\">🇬🇧</button>
                                     <div id=\"buildInfo\" class=\"build-info\">D</div>
                                         <button id=\"statusHistoryBtn\" type=\"button\" title=\"Show recent status messages\">i</button>
                                     <button id=\"debugLogBtn\" type=\"button\" title=\"Toggle runtime debug log\">Debug</button>
@@ -767,7 +842,11 @@ async def scan() -> dict[str, object]:
     catalog = PrinterCatalog.load()
     discovery = BluetoothDiscovery(catalog)
     _debug_event("scan", "Scan started", has_active_printer=bool(active_target))
-    result = await discovery.scan_report(include_classic=True, include_ble=True)
+    try:
+        result = await discovery.scan_report(include_classic=True, include_ble=True)
+    except RuntimeError as exc:
+        _debug_event("error", "Scan failed", error=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     failure_payloads: list[dict[str, object]] = []
     if result.failures:
         for failure in result.failures:

@@ -9,6 +9,7 @@ from timiniprint.transport.bluetooth.backend import (
     _MACOS_FALLBACK_COOLDOWN_SEC,
     _resolve_rfcomm_channels,
 )
+from timiniprint.transport.bluetooth.constants import RFCOMM_CHANNELS
 from timiniprint.transport.bluetooth.types import DeviceInfo, DeviceTransport
 
 
@@ -66,7 +67,7 @@ class BluetoothBackendConnectTests(unittest.TestCase):
         adapter = _Adapter([7, "x", 3, 7])
         self.assertEqual(_resolve_rfcomm_channels(adapter, "AA"), [7, 3])
         empty = _Adapter([])
-        self.assertEqual(_resolve_rfcomm_channels(empty, "AA"), [1])
+        self.assertEqual(_resolve_rfcomm_channels(empty, "AA"), RFCOMM_CHANNELS)
 
     def test_connect_attempts_success_first(self) -> None:
         backend = SppBackend(reporter=reporting.DUMMY_REPORTER)
