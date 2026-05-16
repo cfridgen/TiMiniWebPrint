@@ -97,6 +97,15 @@
   "connection.connected": "Connecté: {name}",
   "connection.autoconnect": "Connexion automatique de la première imprimante détectée...",
   "connection.autoconnectFailed": "Imprimante détectée. La connexion automatique a échoué, veuillez cliquer sur Connecter.",
+  "mode.text": "Texte",
+  "mode.file": "Image / PDF",
+  "file.dropHint": "Déposez un JPG, PNG, SVG ou PDF ici, ou cliquez pour sélectionner",
+  "file.selected": "Sélectionné : {name}",
+  "file.clear": "Supprimer",
+  "file.noFile": "Aucun fichier sélectionné.",
+  "log.noFileLoaded": "Aucun fichier chargé. Veuillez sélectionner une image ou un PDF.",
+  "log.fileLoaded": "Fichier chargé : {name}",
+  "log.convertingSvg": "Conversion SVG en PNG…",
   "runtime.replacements": [
     { "pattern": "\\[connected\\]", "replacement": "[connecté]", "flags": "g" },
     { "pattern": "^Ready\\.$", "replacement": "Prêt.", "flags": "u" }

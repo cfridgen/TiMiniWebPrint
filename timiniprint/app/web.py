@@ -21,11 +21,13 @@ from pydantic import BaseModel, Field
 
 from .. import reporting
 from ..devices import PrinterCatalog
+from ..rendering.converters.image import ImageConverter
+from ..rendering.converters.pdf import PdfConverter
 from ..rendering.converters.text import TextConverter
 from ..transport.bluetooth import BleakBluetoothConnector, BluetoothDiscovery
 from . import cli as cli_app
 
-app = FastAPI(title="ThermoFlow Print", version="1.2.0")
+app = FastAPI(title="ThermoFlow Print", version="1.2.1")
 WEB_STATIC_DIR = Path(__file__).with_name("web_static")
 FONT_DIR = WEB_STATIC_DIR / "fonts"
 DEFAULT_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
@@ -262,6 +264,7 @@ class PreviewRequest(BaseModel):
     text_columns: int = Field(default=15, ge=1, le=120)
     text_font: str | None = None
     text_font_key: str | None = None
+    image_data: str | None = None
 
 
 class PrintRequest(BaseModel):
@@ -675,6 +678,18 @@ def index() -> str:
         .font-summary { align-self: stretch; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 4px 2px 0; }
         #fontLabel { font-size: 14px; font-weight: 700; color: #13273e; margin-bottom: 0; line-height: 1.2; }
         #fontMeta { display: block; font-size: 11px; color: #6a7d90; margin-top: 3px; line-height: 1.2; text-align: center; }
+        /* Mode tabs */
+        .mode-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+        .mode-tab { flex: 1; margin: 0; min-height: 36px; border-radius: 12px; font-size: 13px; font-weight: 700; background: var(--surface-muted); color: var(--muted); border: 1px solid var(--line); }
+        .mode-tab.is-active { background: linear-gradient(180deg, #e6f1ff, #cfe2ff); color: var(--primary-strong); border-color: #bfd6f4; }
+        /* File drop zone */
+        .file-drop-zone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 120px; border: 2px dashed var(--line-strong); border-radius: 16px; background: var(--surface-muted); cursor: pointer; transition: border-color 0.18s, background 0.18s; padding: 20px; text-align: center; }
+        .file-drop-zone:hover, .file-drop-zone.is-drag-over { border-color: var(--primary); background: #eef5ff; }
+        .file-drop-icon { font-size: 32px; line-height: 1; }
+        .file-drop-hint { font-size: 13px; color: var(--muted); font-weight: 600; }
+        .file-selected-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+        .file-selected-name { flex: 1; font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #fileRemoveBtn { width: auto; margin: 0; min-height: 30px; padding: 4px 12px; border-radius: 10px; font-size: 12px; background: #fff1f0; color: #b42318; border: 1px solid #f7c8c4; }
         .font-group { margin-top: 8px; }
         .font-group:first-of-type { margin-top: 0; }
         .font-group-title { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #4f5d6b; margin-bottom: 5px; }
@@ -768,13 +783,32 @@ def index() -> str:
             </div>
 
             <div class=\"section section-card\">
-                <div id="syncFontToggleRow" style="display:none;align-items:center;justify-content:space-between;margin-bottom:4px;">
-                    <label for="text" style="margin-bottom:0;">Label text</label>
-                    <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#6a7d90;cursor:pointer;margin-bottom:0;">
-                        <input type="checkbox" id="syncFontToggle" checked style="width:auto;margin-bottom:0;"> auto-fill
-                    </label>
+                <div class=\"mode-tabs\">
+                    <button id=\"modeTabText\" type=\"button\" class=\"mode-tab is-active\">Text</button>
+                    <button id=\"modeTabFile\" type=\"button\" class=\"mode-tab\">Image / PDF</button>
                 </div>
-                <textarea id="text" rows="10">ABCDEFGHIJKLMNOPQRSTUVWXYZ</textarea>
+
+                <div id=\"textModeSection\">
+                    <div id="syncFontToggleRow" style="display:none;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                        <label for="text" style="margin-bottom:0;">Label text</label>
+                        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#6a7d90;cursor:pointer;margin-bottom:0;">
+                            <input type="checkbox" id="syncFontToggle" checked style="width:auto;margin-bottom:0;"> auto-fill
+                        </label>
+                    </div>
+                    <textarea id="text" rows="10">ABCDEFGHIJKLMNOPQRSTUVWXYZ</textarea>
+                </div>
+
+                <div id=\"fileModeSection\" style=\"display:none;\">
+                    <input type=\"file\" id=\"fileInput\" accept=\".jpg,.jpeg,.png,.svg,.pdf\" style=\"display:none;\" />
+                    <div id=\"fileDropZone\" class=\"file-drop-zone\">
+                        <div class=\"file-drop-icon\">📎</div>
+                        <div id=\"fileDropHint\" class=\"file-drop-hint\">Drop JPG, PNG, SVG or PDF here, or click to select</div>
+                    </div>
+                    <div id=\"fileSelectedRow\" class=\"file-selected-row\" style=\"display:none;\">
+                        <span id=\"fileSelectedName\" class=\"file-selected-name\"></span>
+                        <button id=\"fileRemoveBtn\" type=\"button\">Remove</button>
+                    </div>
+                </div>
             </div>
 
             <div class=\"section section-card\">
@@ -782,11 +816,13 @@ def index() -> str:
                     <div class=\"preview-area\">
                         <div id=\"previewFrame\"><div class=\"carrier-strip\"></div><div class=\"label-area\"><img id=\"preview\" alt=\"preview\" /></div><div class=\"carrier-strip\"></div></div>
                         <div class=\"preview-side-actions\">
+                            <div id=\"textModeControls\">
                             <button id=\"fontBtn\" type=\"button\">Font</button>
                             <button id=\"fontSizeBtn\" type=\"button\">Font size</button>
                             <div class=\"font-summary\">
                                 <div id=\"fontLabel\"></div>
                                 <div id=\"fontMeta\"></div>
+                            </div>
                             </div>
                             <div id=\"fontOverlay\" class=\"side-overlay is-hidden\">
                                 <div class=\"overlay-title\">Font</div>
@@ -825,7 +861,7 @@ def index() -> str:
     </div>
   </div>
 
-<script src="/static/app.js?v=20260515h"></script>
+<script src="/static/app.js?v=20260515i"></script>
 </body>
 </html>"""
 
@@ -1005,6 +1041,38 @@ async def connect(request: ConnectRequest) -> dict[str, str]:
 @app.post("/api/preview")
 def preview(request: PreviewRequest) -> dict[str, object]:
     width = _resolve_profile_width(request.profile_key)
+
+    if request.image_data:
+        # Image or PDF preview
+        raw = _decode_data_url(request.image_data)
+        suffix = _suffix_from_data_url(request.image_data)
+        with tempfile.NamedTemporaryFile("wb", suffix=suffix, delete=False) as handle:
+            handle.write(raw)
+            temp_path = Path(handle.name)
+        try:
+            if suffix == ".pdf":
+                converter: ImageConverter | PdfConverter = PdfConverter(
+                    trim_side_margins=True,
+                    trim_top_bottom_margins=True,
+                )
+            else:
+                converter = ImageConverter(
+                    trim_side_margins=False,
+                    trim_top_bottom_margins=False,
+                )
+            page = converter.load(str(temp_path), width)[0]
+            buf = io.BytesIO()
+            page.image.save(buf, format="PNG")
+            encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+            return {
+                "image_data": f"data:image/png;base64,{encoded}",
+                "width": page.image.width,
+                "height": page.image.height,
+            }
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    # Text preview
     font_path = _resolve_font_path(request.text_font_key, request.text_font)
     converter = TextConverter(
         font_path=font_path,
@@ -1064,6 +1132,25 @@ def _decode_data_url(data_url: str) -> bytes:
         raise HTTPException(status_code=400, detail="Invalid image_data payload") from exc
 
 
+_MIME_SUFFIX: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/bmp": ".bmp",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf",
+}
+
+
+def _suffix_from_data_url(data_url: str) -> str:
+    """Extract file extension from a data-URL MIME type, defaulting to .png."""
+    if data_url.startswith("data:"):
+        mime = data_url[5:].split(";", 1)[0].lower()
+        return _MIME_SUFFIX.get(mime, ".png")
+    return ".png"
+
+
 @app.post("/api/print")
 async def print_label(request: PrintRequest) -> dict[str, str]:
     if not request.image_data and not request.text.strip():
@@ -1081,7 +1168,8 @@ async def print_label(request: PrintRequest) -> dict[str, str]:
     temp_image: Path | None = None
     if request.image_data:
         raw = _decode_data_url(request.image_data)
-        with tempfile.NamedTemporaryFile("wb", suffix=".png", delete=False) as handle:
+        suffix = _suffix_from_data_url(request.image_data)
+        with tempfile.NamedTemporaryFile("wb", suffix=suffix, delete=False) as handle:
             handle.write(raw)
             temp_image = Path(handle.name)
         args.path = str(temp_image)

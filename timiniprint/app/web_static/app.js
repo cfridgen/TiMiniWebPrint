@@ -28,6 +28,8 @@ let buildInfoState = {
   startedAt: '',
 };
 let currentLanguage = 'en';
+let editorMode = 'text'; // 'text' | 'file'
+let uploadedFile = { data: null, name: null }; // data = base64 data URL
 
 function readStoredLanguage() {
   try {
@@ -130,6 +132,13 @@ function applyStaticTranslations() {
   $('fontOkBtn').textContent = t('button.ok');
   $('fontSizeCancelBtn').textContent = t('button.cancel');
   $('fontSizeOkBtn').textContent = t('button.ok');
+  $('modeTabText').textContent = t('mode.text');
+  $('modeTabFile').textContent = t('mode.file');
+  $('fileDropHint').textContent = t('file.dropHint');
+  if ($('fileRemoveBtn')) $('fileRemoveBtn').textContent = t('file.clear');
+  if (uploadedFile.name && $('fileSelectedName')) {
+    $('fileSelectedName').textContent = t('file.selected', { name: uploadedFile.name });
+  }
   $('previewBtn').textContent = t('preview.refresh');
   if (!isPrinting) $('printBtn').textContent = t('print.label');
   if (!isConnecting) $('connectBtn').textContent = t('printer.connect');
@@ -1018,6 +1027,16 @@ function payloadBase() {
 }
 
 async function buildPrintPayload() {
+  if (editorMode === 'file') {
+    if (!uploadedFile.data) {
+      log(t('log.noFileLoaded'));
+      return null;
+    }
+    const payload = payloadBase();
+    payload.image_data = uploadedFile.data;
+    payload.text = '';
+    return payload;
+  }
   return payloadBase();
 }
 
@@ -1158,16 +1177,125 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// ── Editor mode (Text vs File) ─────────────────────────────────────────────
+
+function setEditorMode(mode) {
+  editorMode = mode;
+  $('modeTabText').classList.toggle('is-active', mode === 'text');
+  $('modeTabFile').classList.toggle('is-active', mode === 'file');
+  $('textModeSection').style.display = mode === 'text' ? '' : 'none';
+  $('fileModeSection').style.display = mode === 'file' ? '' : 'none';
+  const textControls = $('textModeControls');
+  if (textControls) textControls.style.display = mode === 'text' ? '' : 'none';
+  if (mode === 'text') {
+    schedulePreview();
+  } else if (uploadedFile.data) {
+    renderPreview(false).catch((err) => log(t('log.previewFailed', { error: err })));
+  } else {
+    $('preview').classList.remove('is-visible');
+  }
+}
+
+function _svgToPng(svgDataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || 800;
+      const h = img.naturalHeight || 600;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => reject(new Error('SVG load failed'));
+    img.src = svgDataUrl;
+  });
+}
+
+async function handleFileSelected(file) {
+  if (!file) return;
+  const fileName = (file.name || '').toLowerCase();
+  const supported = ['.jpg', '.jpeg', '.png', '.svg', '.pdf'];
+  const hasSupportedExtension = supported.some((ext) => fileName.endsWith(ext));
+  if (!hasSupportedExtension) {
+    log(t('log.noFileLoaded'));
+    return;
+  }
+  const isSvg = file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg');
+  const reader = new FileReader();
+  const dataUrl = await new Promise((resolve, reject) => {
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('File read failed'));
+    reader.readAsDataURL(file);
+  });
+  let finalData = dataUrl;
+  if (isSvg) {
+    log(t('log.convertingSvg'));
+    finalData = await _svgToPng(dataUrl);
+  }
+  uploadedFile = { data: finalData, name: file.name };
+  $('fileSelectedName').textContent = t('file.selected', { name: file.name });
+  $('fileSelectedRow').style.display = '';
+  log(t('log.fileLoaded', { name: file.name }));
+  renderPreview(false).catch((err) => log(t('log.previewFailed', { error: err })));
+}
+
+function clearUploadedFile() {
+  uploadedFile = { data: null, name: null };
+  $('fileInput').value = '';
+  $('fileSelectedRow').style.display = 'none';
+  $('preview').classList.remove('is-visible');
+}
+
+function setupFileModeHandlers() {
+  $('modeTabText').addEventListener('click', () => setEditorMode('text'));
+  $('modeTabFile').addEventListener('click', () => setEditorMode('file'));
+
+  const dropZone = $('fileDropZone');
+  dropZone.addEventListener('click', () => $('fileInput').click());
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('is-drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('is-drag-over'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('is-drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelected(file).catch((err) => log(String(err)));
+  });
+  $('fileInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) handleFileSelected(file).catch((err) => log(String(err)));
+  });
+  $('fileRemoveBtn').addEventListener('click', () => {
+    clearUploadedFile();
+    log(t('file.noFile'));
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function renderPreview(manual = false) {
   if (manual) {
     log(t('log.renderingPreview'));
   }
+  if (editorMode === 'file') {
+    if (!uploadedFile.data) {
+      if (manual) log(t('log.noFileLoaded'));
+      return;
+    }
+  }
   const requestId = ++previewRequestSeq;
   try {
+    const body = editorMode === 'file'
+      ? { profile_key: connectedProfileKey || selectedDeviceProfile(), image_data: uploadedFile.data }
+      : payloadBase();
     const res = await fetch('/api/preview', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payloadBase())
+      body: JSON.stringify(body)
     });
     const data = await parseJsonOrLog(res, 'Preview failed');
     if (!data) {
@@ -1202,6 +1330,9 @@ $('printBtn').addEventListener('click', async () => {
   beginBusy(t('busy.printing'), 'print');
   try {
     const payload = await buildPrintPayload();
+    if (!payload) {
+      return;
+    }
     const res = await fetch('/api/print', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -1361,6 +1492,8 @@ window.addEventListener('resize', () => {
 async function init() {
   await loadTranslations();
   setLanguage(detectInitialLanguage());
+  setupFileModeHandlers();
+  setEditorMode('text');
   setupLanguageMenuHandlers();
   initLanguageMenu();
   await setupDebugMode();
