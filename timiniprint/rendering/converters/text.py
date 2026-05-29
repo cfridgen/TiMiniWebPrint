@@ -9,6 +9,7 @@ from ..fonts import find_monospace_bold_font, load_font
 
 COLUMNS_PER_WIDTH = 35 / 384
 REFERENCE_PATTERN = "M.I"
+_PILLOW_DPI = 72  # PIL TrueType size unit: 1pt at this DPI = 1px
 
 
 class TextConverter(PageConverter):
@@ -18,11 +19,15 @@ class TextConverter(PageConverter):
         columns: Optional[int] = None,
         wrap_lines: bool = True,
         preserve_long_lines: bool = False,
+        font_size_pt: Optional[int] = None,
+        printer_dpi: int = 200,
     ) -> None:
         self._font_path = font_path
         self._columns_override = columns
         self._word_wrap = wrap_lines
         self._preserve_long_lines = preserve_long_lines
+        self._font_size_pt = font_size_pt
+        self._printer_dpi = printer_dpi
 
     def load(self, path: str, width: int) -> List[Page]:
         with open(path, "r", encoding="utf-8", errors="replace") as handle:
@@ -33,9 +38,13 @@ class TextConverter(PageConverter):
 
     def _render_text_image(self, text: str, width: int) -> Image.Image:
         font_path = self._font_path or find_monospace_bold_font()
-        columns = self._columns_for_width(width)
-        reference_text = self._reference_text(columns)
-        font = self._fit_truetype_font(font_path, width, reference_text)
+        if self._font_size_pt is not None and font_path:
+            pixel_size = max(6, round(self._font_size_pt * self._printer_dpi / _PILLOW_DPI))
+            font = load_font(font_path, pixel_size)
+        else:
+            columns = self._columns_for_width(width)
+            reference_text = self._reference_text(columns)
+            font = self._fit_truetype_font(font_path, width, reference_text)
         lines = self._wrap_text_lines(text, width, font)
         render_width = width
         if self._preserve_long_lines and lines:

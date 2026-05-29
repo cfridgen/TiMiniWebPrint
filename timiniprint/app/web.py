@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import base64
 import io
+import inspect
 import logging
 import os
 import shutil
@@ -14,6 +15,7 @@ from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from PIL import Image
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +26,7 @@ from ..devices import PrinterCatalog
 from ..rendering.converters.image import ImageConverter
 from ..rendering.converters.pdf import PdfConverter
 from ..rendering.converters.text import TextConverter
+from ..rendering.renderer import image_to_bw_pixels
 from ..transport.bluetooth import BleakBluetoothConnector, BluetoothDiscovery
 from . import cli as cli_app
 
@@ -226,7 +229,7 @@ async def log_http_requests(request, call_next):
     started = time.perf_counter()
     try:
         response = await call_next(request)
-    except Exception:
+    except Exception as exc:
         duration_ms = (time.perf_counter() - started) * 1000
         _debug_event(
             "error",
@@ -234,6 +237,8 @@ async def log_http_requests(request, call_next):
             method=request.method,
             path=path,
             duration_ms=round(duration_ms, 1),
+            error_type=type(exc).__name__,
+            error=str(exc),
         )
         logger.exception("HTTP %s %s -> 500 in %.1fms", request.method, path, duration_ms)
         raise
@@ -265,6 +270,7 @@ class PreviewRequest(BaseModel):
     text_font: str | None = None
     text_font_key: str | None = None
     image_data: str | None = None
+    font_size_pt: int | None = Field(default=None, ge=4, le=200)
 
 
 class PrintRequest(BaseModel):
@@ -277,6 +283,7 @@ class PrintRequest(BaseModel):
     text_font_key: str | None = None
     darkness: int = Field(default=3, ge=1, le=5)
     image_data: str | None = None
+    font_size_pt: int | None = Field(default=None, ge=4, le=200)
 
 
 class ConnectRequest(BaseModel):
@@ -291,16 +298,36 @@ def _normalize_width(width: int) -> int:
 
 def _resolve_profile_width(profile_key: str | None) -> int:
     catalog = PrinterCatalog.load()
-    if profile_key:
-        profile = catalog.get_profile(profile_key)
+    effective_profile_key = profile_key
+    if not effective_profile_key and _active_printer:
+        effective_profile_key = _active_printer.get("profile_key")
+    if effective_profile_key:
+        profile = catalog.get_profile(effective_profile_key)
         if profile is None:
-            raise HTTPException(status_code=400, detail=f"Unknown profile '{profile_key}'")
+            raise HTTPException(status_code=400, detail=f"Unknown profile '{effective_profile_key}'")
         return _normalize_width(profile.width)
     profiles = catalog.profiles
     if not profiles:
         raise HTTPException(status_code=500, detail="No printer profiles available")
-    widest = max(profiles, key=lambda profile: profile.width)
-    return _normalize_width(widest.width)
+    # Fallback to a realistic 58mm-class width when no profile is selected.
+    preferred = min(profiles, key=lambda profile: abs(profile.width - 384))
+    return _normalize_width(preferred.width)
+
+
+def _resolve_profile_dpi(profile_key: str | None) -> int:
+    catalog = PrinterCatalog.load()
+    effective_profile_key = profile_key
+    if not effective_profile_key and _active_printer:
+        effective_profile_key = _active_printer.get("profile_key")
+    if effective_profile_key:
+        profile = catalog.get_profile(effective_profile_key)
+        if profile is not None:
+            return profile.dev_dpi
+    profiles = catalog.profiles
+    if profiles:
+        preferred = min(profiles, key=lambda profile: abs(profile.width - 384))
+        return preferred.dev_dpi
+    return 200
 
 
 def _resolve_font_path(text_font_key: str | None, text_font_path: str | None) -> str | None:
@@ -312,7 +339,68 @@ def _resolve_font_path(text_font_key: str | None, text_font_path: str | None) ->
         if not path.exists():
             raise HTTPException(status_code=500, detail=f"Bundled font missing: {meta['filename']}")
         return str(path)
-    return text_font_path
+    if text_font_path:
+        return text_font_path
+
+    # Always provide a deterministic bundled fallback font so font-size/columns
+    # controls remain effective on legacy converters.
+    default_meta = FONT_CATALOG.get(DEFAULT_FONT_KEY)
+    if default_meta:
+        default_path = FONT_DIR / default_meta["filename"]
+        if default_path.exists():
+            return str(default_path)
+    return None
+
+
+def _create_text_converter(
+    *,
+    font_path: str | None,
+    text_columns: int,
+    font_size_pt: int | None,
+    printer_dpi: int,
+) -> TextConverter:
+    # Keep compatibility with older container images where TextConverter
+    # may not yet support font_size_pt/printer_dpi kwargs.
+    params = inspect.signature(TextConverter.__init__).parameters
+    supports_font_size = "font_size_pt" in params
+    candidate_kwargs: dict[str, object] = {
+        "font_path": font_path,
+        "columns": None if (font_size_pt and supports_font_size) else text_columns,
+        "wrap_lines": True,
+        "font_size_pt": font_size_pt,
+        "printer_dpi": printer_dpi,
+    }
+    supported_kwargs = {name: value for name, value in candidate_kwargs.items() if name in params}
+    return TextConverter(**supported_kwargs)
+
+
+def _preview_png_from_page_image(img: Image.Image, dither: bool) -> str:
+    """Build preview PNG using the same BW1 conversion path as printing."""
+    bw_pixels = image_to_bw_pixels(img, dither=dither)
+    preview = Image.new("L", img.size, 255)
+    preview.putdata([0 if px == 1 else 255 for px in bw_pixels])
+    buf = io.BytesIO()
+    preview.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _compose_preview_pages(pages: list, gap_px: int = 14) -> tuple[Image.Image, bool]:
+    if not pages:
+        raise HTTPException(status_code=400, detail="Nothing to preview")
+    if len(pages) == 1:
+        page = pages[0]
+        return page.image, page.dither
+
+    width = max(page.image.width for page in pages)
+    total_height = sum(page.image.height for page in pages) + gap_px * (len(pages) - 1)
+    canvas = Image.new("L", (width, total_height), 255)
+    y = 0
+    for page in pages:
+        img = page.image.convert("L")
+        x = max(0, (width - img.width) // 2)
+        canvas.paste(img, (x, y))
+        y += img.height + gap_px
+    return canvas, pages[0].dither
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -472,21 +560,31 @@ def index() -> str:
 
         .preview-wrapper { position: relative; }
         .preview-area { display: flex; gap: 14px; align-items: flex-start; }
-        #previewFrame { width: 420px; min-width: 420px; min-height: 160px; border: 1px solid var(--line-strong); border-radius: 24px; overflow: hidden; display: flex; flex-direction: row; align-items: stretch; flex-shrink: 0; box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 14px 26px rgba(30, 54, 87, 0.12); }
-        .carrier-strip { width: 20px; flex-shrink: 0; background-color: #d4d4d4; background-image: repeating-linear-gradient(0deg, rgba(255,255,255,0) 0, rgba(255,255,255,0) 6px, rgba(0,0,0,0.08) 6px, rgba(0,0,0,0.08) 7px); }
-        .label-area { flex: 1; background: linear-gradient(180deg, #ffffff, #f8fbff); display: flex; align-items: center; justify-content: center; }
-        #preview { max-width: 100%; visibility: hidden; }
+        #previewFrame { width: 452px; min-width: 452px; min-height: 210px; height: clamp(210px, 33vh, 320px); border: 1px solid var(--line-strong); border-radius: 24px; overflow: hidden; display: flex; flex-direction: row; align-items: stretch; flex-shrink: 0; box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 14px 26px rgba(30, 54, 87, 0.12); }
+        .carrier-strip { width: 14px; flex-shrink: 0; background-color: #d4d4d4; background-image: repeating-linear-gradient(0deg, rgba(255,255,255,0) 0, rgba(255,255,255,0) 6px, rgba(0,0,0,0.08) 6px, rgba(0,0,0,0.08) 7px); }
+        .label-area { flex: 1; background: linear-gradient(180deg, #ffffff, #f8fbff); display: flex; align-items: flex-start; justify-content: center; overflow: auto; padding: 10px 12px; }
+        #preview { display: block; visibility: hidden; image-rendering: auto; max-width: none; max-height: none; }
+        .label-area.preview-fit-width #preview { width: 100%; height: auto; max-width: 100%; }
+        .label-area.preview-fit-length #preview { width: auto; height: auto; max-height: 100%; max-width: 100%; }
+        .label-area.preview-one-to-one #preview { width: auto; height: auto; max-width: none; max-height: none; }
         #preview.is-visible { visibility: visible; }
         .preview-side-actions { position: relative; display: flex; flex-direction: column; gap: 10px; min-width: 136px; }
         .preview-side-actions button { width: auto; margin-bottom: 0; white-space: nowrap; padding: 12px 14px; }
+        .preview-tool-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+        .preview-tool-row .side-tool-button { min-width: 104px; flex: 0 0 auto; }
+        .preview-scale-group { display: grid; gap: 6px; width: 100%; }
+        .preview-scale-group-label { margin: 0; font-size: 11px; font-weight: 700; color: #4f5d6b; text-transform: uppercase; letter-spacing: 0.04em; }
+        .preview-scale-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+        .preview-scale-button { min-width: 44px; padding: 10px 12px; border-radius: 12px; font-size: 15px; line-height: 1; }
+        .preview-scale-button.is-active { background: linear-gradient(180deg, #e7f0ff, #cfe2ff); color: var(--primary-strong); border: 1px solid #bfd6f4; }
         .preview-actions { margin-top: 14px; }
-        .side-overlay { position: absolute; left: 0; top: calc(100% + 10px); z-index: 200; background: rgba(255,255,255,0.96); border: 1px solid var(--line); border-radius: 20px; padding: 16px; box-shadow: 0 22px 40px rgba(20, 48, 80, 0.2); backdrop-filter: blur(14px); }
+        .side-overlay { position: absolute; left: 0; top: calc(100% + 10px); z-index: 200; background: rgba(255,255,255,0.96); border: 1px solid var(--line); border-radius: 16px; padding: 12px; box-shadow: 0 14px 26px rgba(20, 48, 80, 0.16); backdrop-filter: blur(10px); }
         .side-overlay.is-hidden { display: none; }
-        .overlay-title { font-size: 14px; font-weight: 700; color: #13273e; margin-bottom: 12px; }
-        .overlay-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-        .overlay-footer button { width: auto; margin-bottom: 0; }
-        #fontSizeOverlay { min-width: 260px; }
-        #fontOverlay { left: calc(100% + 12px); top: calc(100% + 10px); min-width: 420px; width: 420px; max-height: 430px; overflow-y: auto; overflow-x: hidden; }
+        .overlay-title { font-size: 13px; font-weight: 700; color: #13273e; margin-bottom: 8px; }
+        .overlay-footer { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+        .overlay-footer button { width: auto; margin-bottom: 0; padding: 8px 11px; border-radius: 10px; font-size: 12px; }
+        #fontSizeOverlay { min-width: 220px; max-width: min(320px, calc(100vw - 40px)); left: 0; top: calc(100% + 10px); }
+        #fontOverlay { min-width: min(420px, calc(100vw - 40px)); width: min(420px, calc(100vw - 40px)); max-height: 420px; overflow-y: auto; overflow-x: hidden; }
 
         .status-hub { 
             position: relative; 
@@ -690,15 +788,15 @@ def index() -> str:
         .file-selected-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
         .file-selected-name { flex: 1; font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         #fileRemoveBtn { width: auto; margin: 0; min-height: 30px; padding: 4px 12px; border-radius: 10px; font-size: 12px; background: #fff1f0; color: #b42318; border: 1px solid #f7c8c4; }
-        .font-group { margin-top: 8px; }
+        .font-group { margin-top: 6px; }
         .font-group:first-of-type { margin-top: 0; }
-        .font-group-title { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #4f5d6b; margin-bottom: 5px; }
+        .font-group-title { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #4f5d6b; margin-bottom: 4px; }
         .font-grid { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 0; }
-        .font-option { border: 1px solid #d5dde7; border-radius: 14px; padding: 8px 9px; cursor: pointer; background: #ffffff; }
+        .font-option { border: 1px solid #d5dde7; border-radius: 12px; padding: 7px 8px; cursor: pointer; background: #ffffff; }
         .font-option.is-selected { border-color: #0a84ff; background: #eef6ff; }
-        .font-name { font-size: 13px; font-weight: 700; margin-bottom: 1px; }
-        .font-tags { font-size: 11px; color: #5f6b77; margin-bottom: 4px; }
-        .font-sample { font-size: 14px; color: #1f2731; line-height: 1.15; }
+        .font-name { font-size: 12px; font-weight: 700; margin-bottom: 1px; }
+        .font-tags { font-size: 10px; color: #5f6b77; margin-bottom: 3px; }
+        .font-sample { font-size: 12px; color: #1f2731; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
         @media (max-width: 840px) {
             .hero { flex-direction: column; }
@@ -707,7 +805,8 @@ def index() -> str:
             #previewFrame { width: 100%; min-width: 0; }
             .preview-side-actions { width: 100%; min-width: 0; flex-direction: row; }
             .preview-side-actions button { flex: 1; }
-            #fontOverlay { left: 0; top: calc(100% + 10px); min-width: min(420px, calc(100vw - 40px)); width: min(420px, calc(100vw - 40px)); max-height: none; }
+            #fontOverlay { min-width: min(420px, calc(100vw - 40px)); width: min(420px, calc(100vw - 40px)); max-height: none; }
+            #fontSizeOverlay { max-width: min(320px, calc(100vw - 40px)); left: 0; top: calc(100% + 10px); }
         }
 
     </style>
@@ -814,15 +913,23 @@ def index() -> str:
             <div class=\"section section-card\">
                 <div class=\"preview-wrapper\">
                     <div class=\"preview-area\">
-                        <div id=\"previewFrame\"><div class=\"carrier-strip\"></div><div class=\"label-area\"><img id=\"preview\" alt=\"preview\" /></div><div class=\"carrier-strip\"></div></div>
+                        <div id=\"previewFrame\"><div class=\"carrier-strip\"></div><div class=\"label-area preview-fit-width\"><img id=\"preview\" alt=\"preview\" /></div><div class=\"carrier-strip\"></div></div>
                         <div class=\"preview-side-actions\">
-                            <div id=\"textModeControls\">
-                            <button id=\"fontBtn\" type=\"button\">Font</button>
-                            <button id=\"fontSizeBtn\" type=\"button\">Font size</button>
-                            <div class=\"font-summary\">
-                                <div id=\"fontLabel\"></div>
-                                <div id=\"fontMeta\"></div>
-                            </div>
+                            <div class=\"preview-tool-row\">
+                                <button id=\"fontBtn\" type=\"button\" class=\"side-tool-button\">Font</button>
+                                <button id=\"fontSizeBtn\" type=\"button\" class=\"side-tool-button\">Font size</button>
+                                <div class=\"font-summary\">
+                                    <div id=\"fontLabel\"></div>
+                                    <div id=\"fontMeta\"></div>
+                                </div>
+                                <div class=\"preview-scale-group\">
+                                    <div id=\"previewScaleLabel\" class=\"preview-scale-group-label\">Print size</div>
+                                    <div class=\"preview-scale-buttons\" role=\"group\" aria-label=\"Print size\">
+                                        <button id=\"previewScaleWidthBtn\" type=\"button\" class=\"preview-scale-button\" title=\"Fit optimal width\" aria-pressed=\"true\">↔</button>
+                                        <button id=\"previewScaleLengthBtn\" type=\"button\" class=\"preview-scale-button\" title=\"Fit full length\" aria-pressed=\"false\">↕</button>
+                                        <button id=\"previewScaleOneToOneBtn\" type=\"button\" class=\"preview-scale-button\" title=\"1:1\" aria-pressed=\"false\">1:1</button>
+                                    </div>
+                                </div>
                             </div>
                             <div id=\"fontOverlay\" class=\"side-overlay is-hidden\">
                                 <div class=\"overlay-title\">Font</div>
@@ -837,9 +944,9 @@ def index() -> str:
                     <div id=\"fontSizeOverlay\" class=\"side-overlay is-hidden\">
                         <div class=\"overlay-title\">Font size</div>
                         <div class=\"slider-row\">
-                            <span class=\"slider-hint\">small</span>
-                            <input id=\"columns\" type=\"range\" min=\"15\" max=\"52\" value=\"52\" />
-                            <span id=\"columnsValue\" class=\"slider-hint\">15 cpl</span>
+                            <span class=\"slider-hint\">6pt</span>
+                            <input id=\"columns\" type=\"range\" min=\"0\" max=\"15\" step=\"1\" value=\"6\" />
+                            <span id=\"columnsValue\" class=\"slider-hint\">12pt</span>
                         </div>
                         <div class=\"overlay-footer\">
                             <button id=\"fontSizeCancelBtn\" type=\"button\">Cancel</button>
@@ -861,7 +968,7 @@ def index() -> str:
     </div>
   </div>
 
-<script src="/static/app.js?v=20260515i"></script>
+<script src="/static/app.js?v=20260525b"></script>
 </body>
 </html>"""
 
@@ -1040,60 +1147,67 @@ async def connect(request: ConnectRequest) -> dict[str, str]:
 
 @app.post("/api/preview")
 def preview(request: PreviewRequest) -> dict[str, object]:
-    width = _resolve_profile_width(request.profile_key)
+    try:
+        width = _resolve_profile_width(request.profile_key)
 
-    if request.image_data:
-        # Image or PDF preview
-        raw = _decode_data_url(request.image_data)
-        suffix = _suffix_from_data_url(request.image_data)
-        with tempfile.NamedTemporaryFile("wb", suffix=suffix, delete=False) as handle:
-            handle.write(raw)
+        if request.image_data:
+            # Image or PDF preview
+            raw = _decode_data_url(request.image_data)
+            suffix = _suffix_from_data_url(request.image_data)
+            with tempfile.NamedTemporaryFile("wb", suffix=suffix, delete=False) as handle:
+                handle.write(raw)
+                temp_path = Path(handle.name)
+            try:
+                if suffix == ".pdf":
+                    converter: ImageConverter | PdfConverter = PdfConverter(
+                        trim_side_margins=True,
+                        trim_top_bottom_margins=True,
+                    )
+                else:
+                    converter = ImageConverter(
+                        trim_side_margins=False,
+                        trim_top_bottom_margins=False,
+                    )
+                pages = converter.load(str(temp_path), width)
+                preview_image, dither = _compose_preview_pages(pages)
+                encoded = _preview_png_from_page_image(preview_image, dither=dither)
+                return {
+                    "image_data": f"data:image/png;base64,{encoded}",
+                    "width": preview_image.width,
+                    "height": preview_image.height,
+                }
+            finally:
+                temp_path.unlink(missing_ok=True)
+
+        # Text preview
+        font_path = _resolve_font_path(request.text_font_key, request.text_font)
+        printer_dpi = _resolve_profile_dpi(request.profile_key)
+        converter = _create_text_converter(
+            font_path=font_path,
+            text_columns=request.text_columns,
+            font_size_pt=request.font_size_pt,
+            printer_dpi=printer_dpi,
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as handle:
+            handle.write(request.text)
             temp_path = Path(handle.name)
         try:
-            if suffix == ".pdf":
-                converter: ImageConverter | PdfConverter = PdfConverter(
-                    trim_side_margins=True,
-                    trim_top_bottom_margins=True,
-                )
-            else:
-                converter = ImageConverter(
-                    trim_side_margins=False,
-                    trim_top_bottom_margins=False,
-                )
-            page = converter.load(str(temp_path), width)[0]
-            buf = io.BytesIO()
-            page.image.save(buf, format="PNG")
-            encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+            pages = converter.load(str(temp_path), width)
+            preview_image, dither = _compose_preview_pages(pages)
+            encoded = _preview_png_from_page_image(preview_image, dither=dither)
             return {
                 "image_data": f"data:image/png;base64,{encoded}",
-                "width": page.image.width,
-                "height": page.image.height,
+                "width": preview_image.width,
+                "height": preview_image.height,
             }
         finally:
             temp_path.unlink(missing_ok=True)
-
-    # Text preview
-    font_path = _resolve_font_path(request.text_font_key, request.text_font)
-    converter = TextConverter(
-        font_path=font_path,
-        columns=request.text_columns,
-        wrap_lines=True,
-    )
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as handle:
-        handle.write(request.text)
-        temp_path = Path(handle.name)
-    try:
-        page = converter.load(str(temp_path), width)[0]
-        buf = io.BytesIO()
-        page.image.save(buf, format="PNG")
-        encoded = base64.b64encode(buf.getvalue()).decode("ascii")
-        return {
-            "image_data": f"data:image/png;base64,{encoded}",
-            "width": page.image.width,
-            "height": page.image.height,
-        }
-    finally:
-        temp_path.unlink(missing_ok=True)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _debug_event("error", "Preview unexpected exception", error=str(exc), has_image=bool(request.image_data))
+        logger.exception("Unexpected error while handling /api/preview request", exc_info=exc)
+        raise HTTPException(status_code=500, detail="PREVIEW_UNEXPECTED_ERROR") from exc
 
 
 def _build_args(request: PrintRequest) -> argparse.Namespace:
@@ -1109,6 +1223,7 @@ def _build_args(request: PrintRequest) -> argparse.Namespace:
         text=request.text,
         text_font=text_font,
         text_columns=request.text_columns,
+        font_size_pt=request.font_size_pt,
         pdf_pages=None,
         pdf_page_gap=5,
         trim_side_margins=True,

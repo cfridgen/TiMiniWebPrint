@@ -30,6 +30,7 @@ let buildInfoState = {
 let currentLanguage = 'en';
 let editorMode = 'text'; // 'text' | 'file'
 let uploadedFile = { data: null, name: null }; // data = base64 data URL
+const PREVIEW_SCALE_STORAGE_KEY = 'timiniprint_preview_scale_mode';
 
 function readStoredLanguage() {
   try {
@@ -114,8 +115,26 @@ function applyStaticTranslations() {
   if (fontOverlayTitle) fontOverlayTitle.textContent = t('font.title');
   const sizeOverlayTitle = document.querySelector('#fontSizeOverlay .overlay-title');
   if (sizeOverlayTitle) sizeOverlayTitle.textContent = t('font.size.title');
-  const smallHint = document.querySelector('#fontSizeOverlay .slider-hint');
-  if (smallHint) smallHint.textContent = t('font.small');
+  const previewScaleLabel = $('previewScaleLabel');
+  if (previewScaleLabel) {
+    const value = t('preview.scale.label');
+    previewScaleLabel.textContent = value === 'preview.scale.label' ? 'Print size' : value;
+  }
+  const previewScaleWidthBtn = $('previewScaleWidthBtn');
+  if (previewScaleWidthBtn) {
+    const value = t('preview.scale.fitWidth');
+    previewScaleWidthBtn.title = value === 'preview.scale.fitWidth' ? 'Fit optimal width' : value;
+  }
+  const previewScaleLengthBtn = $('previewScaleLengthBtn');
+  if (previewScaleLengthBtn) {
+    const value = t('preview.scale.fitLength');
+    previewScaleLengthBtn.title = value === 'preview.scale.fitLength' ? 'Fit full length' : value;
+  }
+  const previewScaleOneToOneBtn = $('previewScaleOneToOneBtn');
+  if (previewScaleOneToOneBtn) {
+    const value = t('preview.scale.oneToOne');
+    previewScaleOneToOneBtn.title = value === 'preview.scale.oneToOne' ? '1:1' : value;
+  }
 
   $('busyMessage').textContent = t('busy.pleaseWait');
   $('busyHideBtn').textContent = t('busy.hide');
@@ -722,11 +741,26 @@ function selectedDeviceProfile() {
   return option.dataset.profileKey || null;
 }
 
+// Standard point sizes, matching layout applications
+const PT_SIZES = [6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
+const PT_DEFAULT_INDEX = 6; // 12pt
+
+function currentFontSizePt() {
+  const idx = Number($('columns').value || PT_DEFAULT_INDEX);
+  return PT_SIZES[Math.max(0, Math.min(PT_SIZES.length - 1, idx))];
+}
+
+// Keep backward-compat name used in many places
 function currentColumnsValue() {
-  const sliderMin = Number($('columns').min || 15);
-  const sliderMax = Number($('columns').max || 52);
-  const sliderValue = Number($('columns').value || sliderMax);
-  return sliderMax - sliderValue + sliderMin;
+  return currentFontSizePt();
+}
+
+function columnsFromFontSizePt(pt) {
+  const safePt = Math.max(4, Number(pt) || 12);
+  // Backward-compat fallback for runtimes that only support text_columns.
+  // Anchors: ~12pt => 15 columns, larger pt => fewer columns.
+  const columns = Math.round(180 / safePt);
+  return Math.max(1, Math.min(120, columns));
 }
 
 function fontByKey(fontKey) {
@@ -761,7 +795,7 @@ function syncTextToFontSummary() {
   if (!$('syncFontToggle') || !$('syncFontToggle').checked) return;
   const selectedFont = fontByKey(selectedFontKey);
   const fontLabel = selectedFont ? selectedFont.label : t('font.noSelection');
-  $('text').value = `${fontLabel}\n${currentColumnsValue()} cpl`;
+  $('text').value = `${fontLabel}\n${currentFontSizePt()}pt`;
 }
 
 function updateFontSummary() {
@@ -771,7 +805,7 @@ function updateFontSummary() {
     ? `${selectedFont.css_family}, sans-serif`
     : '';
   $('text').style.fontFamily = selectedFont ? `${selectedFont.css_family}, sans-serif` : '';
-  $('fontMeta').textContent = `${currentColumnsValue()} cpl`;
+  $('fontMeta').textContent = `${currentFontSizePt()}pt`;
 }
 
 function renderFontOptions() {
@@ -851,26 +885,46 @@ function setFontPanelVisible(visible) {
 
 function positionFontOverlay() {
   const overlay = $('fontOverlay');
-  const trigger = $('fontBtn');
-  if (!overlay || !trigger || overlay.classList.contains('is-hidden')) {
+  if (!overlay || overlay.classList.contains('is-hidden')) {
+    return;
+  }
+  positionOverlayBelowFontButtons(overlay);
+}
+
+function positionFontSizeOverlay() {
+  const overlay = $('fontSizeOverlay');
+  if (!overlay || overlay.classList.contains('is-hidden')) {
     return;
   }
 
+  positionOverlayBelowFontButtons(overlay);
+}
+
+function positionOverlayBelowFontButtons(overlay) {
+  const fontBtn = $('fontBtn');
+  const fontSizeBtn = $('fontSizeBtn');
+  const parent = overlay.offsetParent;
+  if (!overlay || !fontBtn || !fontSizeBtn || !parent) {
+    return;
+  }
+
+  const fontBtnRect = fontBtn.getBoundingClientRect();
+  const fontSizeBtnRect = fontSizeBtn.getBoundingClientRect();
+  const parentRect = parent.getBoundingClientRect();
+  const gap = 6;
+
+  const minLeft = 0;
+  const maxLeft = Math.max(0, parent.clientWidth - overlay.offsetWidth);
+  const anchorLeft = Math.min(fontBtnRect.left, fontSizeBtnRect.left);
+  const anchorBottom = Math.max(fontBtnRect.bottom, fontSizeBtnRect.bottom);
+  const targetLeft = Math.max(minLeft, Math.min(maxLeft, anchorLeft - parentRect.left));
+  const targetTop = Math.max(0, anchorBottom - parentRect.top + gap);
+
+  overlay.style.left = '';
   overlay.style.top = '';
   overlay.style.bottom = '';
-
-  const triggerRect = trigger.getBoundingClientRect();
-  const overlayHeight = Math.min(overlay.scrollHeight || 0, 430);
-  const spaceBelow = window.innerHeight - triggerRect.bottom;
-  const spaceAbove = triggerRect.top;
-  const preferAbove = spaceAbove > spaceBelow && spaceAbove >= overlayHeight - 40;
-
-  if (preferAbove) {
-    overlay.style.top = `${-(overlayHeight - triggerRect.height)}px`;
-    return;
-  }
-
-  overlay.style.top = 'calc(100% + 10px)';
+  overlay.style.left = `${targetLeft}px`;
+  overlay.style.top = `${targetTop}px`;
 }
 
 async function loadFonts() {
@@ -899,7 +953,7 @@ async function loadFonts() {
 }
 
 function updateColumnsLabel() {
-  $('columnsValue').textContent = `${currentColumnsValue()} cpl`;
+  $('columnsValue').textContent = `${currentFontSizePt()}pt`;
   updateFontSummary();
 }
 
@@ -917,10 +971,19 @@ function schedulePreview() {
 }
 
 async function parseJsonOrLog(res, context) {
+  const responseText = await res.text();
+  if (!responseText) {
+    return {};
+  }
   try {
-    return await res.json();
+    return JSON.parse(responseText);
   } catch (err) {
-    log(`${context}: invalid JSON response: ${err}`);
+    const compactBody = responseText.replace(/\s+/g, ' ').trim().slice(0, 220);
+    const bodyInfo = compactBody ? `; body: ${compactBody}` : '';
+    log(`${context}: invalid JSON response (${res.status}): ${err}${bodyInfo}`);
+    if (!res.ok) {
+      return { detail: compactBody || 'Invalid non-JSON error response' };
+    }
     return null;
   }
 }
@@ -1014,13 +1077,15 @@ async function loadProfiles() {
 }
 
 function payloadBase() {
+  const fontSizePt = currentFontSizePt();
   return {
     text: editorTextValue(),
     profile_key: connectedProfileKey || selectedDeviceProfile(),
     bluetooth: connectedTarget || selectedDeviceTarget(),
     serial: null,
     device_config: null,
-    text_columns: currentColumnsValue(),
+    text_columns: columnsFromFontSizePt(fontSizePt),
+    font_size_pt: fontSizePt,
     text_font_key: selectedFontKey,
     darkness: Number($('darkness').value || 3),
   };
@@ -1099,9 +1164,15 @@ $('previewBtn').addEventListener('click', async () => {
 
 $('fontSizeBtn').addEventListener('click', (e) => {
   e.stopPropagation();
+  const sizeOverlay = $('fontSizeOverlay');
+  if (!sizeOverlay.classList.contains('is-hidden')) {
+    sizeOverlay.classList.add('is-hidden');
+    return;
+  }
   previousColumnsValue = Number($('columns').value);
   $('fontOverlay').classList.add('is-hidden');
-  $('fontSizeOverlay').classList.remove('is-hidden');
+  sizeOverlay.classList.remove('is-hidden');
+  requestAnimationFrame(() => positionFontSizeOverlay());
 });
 
 $('fontSizeCancelBtn').addEventListener('click', (e) => {
@@ -1123,6 +1194,11 @@ $('fontSizeOkBtn').addEventListener('click', (e) => {
 
 $('fontBtn').addEventListener('click', (e) => {
   e.stopPropagation();
+  const fontOverlay = $('fontOverlay');
+  if (!fontOverlay.classList.contains('is-hidden')) {
+    setFontPanelVisible(false);
+    return;
+  }
   previousFontKey = selectedFontKey;
   pendingFontKey = selectedFontKey;
   renderFontOptions();
@@ -1275,6 +1351,64 @@ function setupFileModeHandlers() {
   });
 }
 
+function applyPreviewScaleMode(mode) {
+  const labelArea = document.querySelector('#previewFrame .label-area');
+  if (!labelArea) {
+    return;
+  }
+  const allowedModes = new Set(['fit-width', 'fit-length', 'one-to-one']);
+  const normalized = allowedModes.has(mode) ? mode : 'fit-width';
+  labelArea.classList.remove('preview-fit-width', 'preview-fit-length', 'preview-one-to-one');
+  if (normalized === 'fit-width') {
+    labelArea.classList.add('preview-fit-width');
+  } else if (normalized === 'fit-length') {
+    labelArea.classList.add('preview-fit-length');
+  } else {
+    labelArea.classList.add('preview-one-to-one');
+  }
+  const buttons = [
+    ['fit-width', $('previewScaleWidthBtn')],
+    ['fit-length', $('previewScaleLengthBtn')],
+    ['one-to-one', $('previewScaleOneToOneBtn')],
+  ];
+  buttons.forEach(([buttonMode, button]) => {
+    if (!button) return;
+    const isActive = buttonMode === normalized;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+  try {
+    localStorage.setItem(PREVIEW_SCALE_STORAGE_KEY, normalized);
+  } catch (_) {
+    // Ignore storage failures in restricted browser modes.
+  }
+}
+
+function setupPreviewScaleMode() {
+  const buttons = [
+    ['fit-width', $('previewScaleWidthBtn')],
+    ['fit-length', $('previewScaleLengthBtn')],
+    ['one-to-one', $('previewScaleOneToOneBtn')],
+  ];
+  if (buttons.every(([, button]) => !button)) {
+    return;
+  }
+  let initialMode = 'fit-width';
+  try {
+    const stored = localStorage.getItem(PREVIEW_SCALE_STORAGE_KEY);
+    if (stored) {
+      initialMode = stored;
+    }
+  } catch (_) {
+    // Ignore storage failures in restricted browser modes.
+  }
+  applyPreviewScaleMode(initialMode);
+  buttons.forEach(([mode, button]) => {
+    if (!button) return;
+    button.addEventListener('click', () => applyPreviewScaleMode(mode));
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function renderPreview(manual = false) {
@@ -1286,6 +1420,15 @@ async function renderPreview(manual = false) {
       if (manual) log(t('log.noFileLoaded'));
       return;
     }
+  }
+  if (editorMode === 'text' && editorTextValue().trim().length === 0) {
+    const preview = $('preview');
+    preview.removeAttribute('src');
+    preview.classList.remove('is-visible');
+    if (manual) {
+      log(t('log.noTextForPreview'));
+    }
+    return;
   }
   const requestId = ++previewRequestSeq;
   try {
@@ -1487,12 +1630,14 @@ function setupLanguageMenuHandlers() {
 
 window.addEventListener('resize', () => {
   positionFontOverlay();
+  positionFontSizeOverlay();
 });
 
 async function init() {
   await loadTranslations();
   setLanguage(detectInitialLanguage());
   setupFileModeHandlers();
+  setupPreviewScaleMode();
   setEditorMode('text');
   setupLanguageMenuHandlers();
   initLanguageMenu();

@@ -124,6 +124,7 @@ def create_print_job_builder(
     trim_top_bottom_margins: bool = True,
     pdf_pages: Optional[str] = None,
     pdf_page_gap_mm: int = 5,
+    font_size_pt: Optional[int] = None,
 ) -> PrintJobBuilder:
     settings = PrintSettings(
         text_mode=text_mode,
@@ -134,6 +135,7 @@ def create_print_job_builder(
         trim_top_bottom_margins=trim_top_bottom_margins,
         pdf_pages=pdf_pages,
         pdf_page_gap_mm=pdf_page_gap_mm,
+        font_size_pt=font_size_pt,
     )
     if blackening is not None:
         settings.blackening = blackening
@@ -153,6 +155,7 @@ def build_print_job(
     trim_top_bottom_margins: bool = True,
     pdf_pages: Optional[str] = None,
     pdf_page_gap_mm: int = 5,
+    font_size_pt: Optional[int] = None,
 ) -> ProtocolJob:
     builder = create_print_job_builder(
         device,
@@ -165,6 +168,7 @@ def build_print_job(
         trim_top_bottom_margins,
         pdf_pages,
         pdf_page_gap_mm,
+        font_size_pt,
     )
     if text_input is None:
         if not path:
@@ -351,6 +355,7 @@ def print_bluetooth(
             trim_top_bottom_margins=_resolve_trim_top_bottom_margins(args),
             pdf_pages=_resolve_pdf_pages(args),
             pdf_page_gap_mm=_resolve_pdf_page_gap(args),
+            font_size_pt=getattr(args, 'font_size_pt', None),
         )
         connection = await BleakBluetoothConnector(reporter=reporter).connect(device)
         try:
@@ -381,6 +386,7 @@ def print_serial(args: argparse.Namespace) -> int:
         trim_top_bottom_margins=_resolve_trim_top_bottom_margins(args),
         pdf_pages=_resolve_pdf_pages(args),
         pdf_page_gap_mm=_resolve_pdf_page_gap(args),
+        font_size_pt=getattr(args, 'font_size_pt', None),
     )
 
     async def run() -> None:

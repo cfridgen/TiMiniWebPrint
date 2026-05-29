@@ -31,6 +31,8 @@ class PrintJobBuilder:
             trim_top_bottom_margins=self.settings.trim_top_bottom_margins,
             pdf_pages=self.settings.pdf_pages,
             pdf_page_gap_px=pdf_page_gap_px,
+            font_size_pt=self.settings.font_size_pt,
+            printer_dpi=self.device.profile.dev_dpi,
         )
         self.protocol = PrinterProtocol(device)
 

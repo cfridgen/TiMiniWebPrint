@@ -23,6 +23,8 @@ class PageLoader:
         trim_top_bottom_margins: bool = True,
         pdf_pages: Optional[str] = None,
         pdf_page_gap_px: int = 0,
+        font_size_pt: Optional[int] = None,
+        printer_dpi: int = 200,
     ) -> None:
         if converters is None:
             converters = {}
@@ -40,9 +42,11 @@ class PageLoader:
             )
             converters[".txt"] = TextConverter(
                 font_path=text_font,
-                columns=text_columns,
+                columns=None if font_size_pt else text_columns,
                 wrap_lines=text_wrap,
                 preserve_long_lines=text_preserve_long_lines,
+                font_size_pt=font_size_pt,
+                printer_dpi=printer_dpi,
             )
         self._converters = converters
 

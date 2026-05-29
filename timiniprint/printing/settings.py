@@ -19,6 +19,7 @@ class PrintSettings:
     text_font: Optional[str] = None
     text_columns: Optional[int] = None
     text_wrap: bool = True
+    font_size_pt: Optional[int] = None
     blackening: int = DEFAULT_BLACKENING
     feed_padding: int = DEFAULT_FEED_PADDING
     trim_side_margins: bool = True
