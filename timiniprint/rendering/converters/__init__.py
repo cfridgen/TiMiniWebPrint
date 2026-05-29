@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 from typing import Dict, List, Optional, Set
 
@@ -7,6 +8,7 @@ from .base import Page, PageConverter
 from .image import ImageConverter
 from .pdf import PdfConverter
 from .text import TextConverter
+from ..text_size_policy import resolve_text_size
 
 SUPPORTED_EXTENSIONS: Set[str] = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".pdf", ".txt"}
 
@@ -40,14 +42,19 @@ class PageLoader:
                 trim_side_margins=trim_side_margins,
                 trim_top_bottom_margins=trim_top_bottom_margins,
             )
-            converters[".txt"] = TextConverter(
-                font_path=text_font,
-                columns=None if font_size_pt else text_columns,
-                wrap_lines=text_wrap,
-                preserve_long_lines=text_preserve_long_lines,
-                font_size_pt=font_size_pt,
-                printer_dpi=printer_dpi,
-            )
+            size = resolve_text_size(font_size_pt=font_size_pt, text_columns=text_columns)
+            params = inspect.signature(TextConverter.__init__).parameters
+            supports_font_size = "font_size_pt" in params
+            candidate_kwargs: Dict[str, object] = {
+                "font_path": text_font,
+                "columns": None if supports_font_size else size.text_columns,
+                "wrap_lines": text_wrap,
+                "preserve_long_lines": text_preserve_long_lines,
+                "font_size_pt": size.font_size_pt,
+                "printer_dpi": printer_dpi,
+            }
+            supported_kwargs = {name: value for name, value in candidate_kwargs.items() if name in params}
+            converters[".txt"] = TextConverter(**supported_kwargs)
         self._converters = converters
 
     @property

@@ -26,6 +26,7 @@ from ..devices import PrinterCatalog
 from ..rendering.converters.image import ImageConverter
 from ..rendering.converters.pdf import PdfConverter
 from ..rendering.converters.text import TextConverter
+from ..rendering.text_size_policy import resolve_text_size
 from ..rendering.renderer import image_to_bw_pixels
 from ..transport.bluetooth import BleakBluetoothConnector, BluetoothDiscovery
 from . import cli as cli_app
@@ -372,6 +373,11 @@ def _create_text_converter(
     }
     supported_kwargs = {name: value for name, value in candidate_kwargs.items() if name in params}
     return TextConverter(**supported_kwargs)
+
+
+def _resolved_size_for_request(font_size_pt: int | None, text_columns: int) -> tuple[int, int]:
+    size = resolve_text_size(font_size_pt=font_size_pt, text_columns=text_columns)
+    return size.font_size_pt, size.text_columns
 
 
 def _preview_png_from_page_image(img: Image.Image, dither: bool) -> str:
@@ -1182,10 +1188,11 @@ def preview(request: PreviewRequest) -> dict[str, object]:
         # Text preview
         font_path = _resolve_font_path(request.text_font_key, request.text_font)
         printer_dpi = _resolve_profile_dpi(request.profile_key)
+        resolved_pt, resolved_columns = _resolved_size_for_request(request.font_size_pt, request.text_columns)
         converter = _create_text_converter(
             font_path=font_path,
-            text_columns=request.text_columns,
-            font_size_pt=request.font_size_pt,
+            text_columns=resolved_columns,
+            font_size_pt=resolved_pt,
             printer_dpi=printer_dpi,
         )
         with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as handle:
@@ -1211,6 +1218,7 @@ def preview(request: PreviewRequest) -> dict[str, object]:
 
 
 def _build_args(request: PrintRequest) -> argparse.Namespace:
+    resolved_pt, resolved_columns = _resolved_size_for_request(request.font_size_pt, request.text_columns)
     text_font = _resolve_font_path(request.text_font_key, request.text_font)
     return argparse.Namespace(
         path=None,
@@ -1222,8 +1230,8 @@ def _build_args(request: PrintRequest) -> argparse.Namespace:
         list_profiles=False,
         text=request.text,
         text_font=text_font,
-        text_columns=request.text_columns,
-        font_size_pt=request.font_size_pt,
+        text_columns=resolved_columns,
+        font_size_pt=resolved_pt,
         pdf_pages=None,
         pdf_page_gap=5,
         trim_side_margins=True,
@@ -1277,6 +1285,7 @@ async def print_label(request: PrintRequest) -> dict[str, str]:
         bluetooth_target=request.bluetooth,
         serial_target=request.serial,
         text_columns=request.text_columns,
+        font_size_pt=request.font_size_pt,
         has_image=bool(request.image_data),
     )
     args = _build_args(request)

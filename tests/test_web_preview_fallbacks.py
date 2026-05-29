@@ -55,6 +55,15 @@ class WebPreviewFallbackTests(unittest.TestCase):
         self.assertEqual(width, 384)
         self.assertEqual(dpi, 203)
 
+    def test_build_args_normalizes_text_size(self) -> None:
+        request = web.PrintRequest(text="hello", text_columns=40, font_size_pt=28)
+
+        with patch.object(web, "_resolve_font_path", return_value=None):
+            args = web._build_args(request)
+
+        self.assertEqual(args.font_size_pt, 28)
+        self.assertEqual(args.text_columns, 6)
+
 
 if __name__ == "__main__":
     unittest.main()
