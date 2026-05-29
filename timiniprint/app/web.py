@@ -26,10 +26,46 @@ from ..devices import PrinterCatalog
 from ..rendering.converters.image import ImageConverter
 from ..rendering.converters.pdf import PdfConverter
 from ..rendering.converters.text import TextConverter
-from ..rendering.text_size_policy import resolve_text_size
 from ..rendering.renderer import image_to_bw_pixels
 from ..transport.bluetooth import BleakBluetoothConnector, BluetoothDiscovery
 from . import cli as cli_app
+
+try:
+    from ..rendering.text_size_policy import resolve_text_size
+except ModuleNotFoundError:
+    # Mixed deployment fallback: only timiniprint/app is bind-mounted on dev host.
+    # Keep sizing behavior deterministic even if rendering package from image is older.
+    def resolve_text_size(font_size_pt: int | None, text_columns: int | None):
+        anchor_pt = 12
+        anchor_cols = 15
+
+        def clamp_pt(value: int | None) -> int:
+            if value is None:
+                return anchor_pt
+            return max(4, min(200, int(value)))
+
+        def clamp_cols(value: int | None) -> int:
+            if value is None:
+                return anchor_cols
+            return max(1, min(120, int(value)))
+
+        def cols_from_pt(pt: int) -> int:
+            return clamp_cols(round((anchor_cols * anchor_pt) / max(1, pt)))
+
+        def pt_from_cols(cols: int) -> int:
+            return clamp_pt(round((anchor_cols * anchor_pt) / max(1, cols)))
+
+        class _Spec:
+            def __init__(self, font_size_pt_value: int, text_columns_value: int) -> None:
+                self.font_size_pt = font_size_pt_value
+                self.text_columns = text_columns_value
+
+        if font_size_pt is not None:
+            normalized_pt = clamp_pt(font_size_pt)
+            return _Spec(normalized_pt, cols_from_pt(normalized_pt))
+
+        normalized_cols = clamp_cols(text_columns)
+        return _Spec(pt_from_cols(normalized_cols), normalized_cols)
 
 app = FastAPI(title="ThermoFlow Print", version="1.2.1")
 WEB_STATIC_DIR = Path(__file__).with_name("web_static")
