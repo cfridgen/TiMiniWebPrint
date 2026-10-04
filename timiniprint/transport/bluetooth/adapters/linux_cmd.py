@@ -102,6 +102,20 @@ class LinuxCommandTools:
         if not self._bluetoothctl_is_paired(address):
             raise RuntimeError("pairing did not complete")
 
+    def ensure_connected(self, address: str) -> None:
+        """Activate the BlueZ link before opening an RFCOMM socket.
+
+        Some printers only accept the RFCOMM socket after BlueZ has established
+        the baseband link. `bluetoothctl connect` can report a profile error
+        even after that link is active, so the device's reported state is the
+        success criterion rather than the command's exit status.
+        """
+        if not self._has_bluetoothctl() or self._bluetoothctl_is_connected(address):
+            return
+        self._run_bluetoothctl(["connect", address], timeout=20)
+        if not self._bluetoothctl_is_connected(address):
+            raise RuntimeError("Bluetooth device did not become connected")
+
     @staticmethod
     def _has_bluetoothctl() -> bool:
         return bool(shutil.which("bluetoothctl"))
@@ -145,6 +159,16 @@ class LinuxCommandTools:
         for line in output.splitlines():
             line = line.strip().lower()
             if line.startswith("paired:"):
+                return line.split(":", 1)[-1].strip() == "yes"
+        return False
+
+    def _bluetoothctl_is_connected(self, address: str) -> bool:
+        output = self._run_bluetoothctl(["info", address], timeout=5)
+        if not output:
+            return False
+        for line in output.splitlines():
+            line = line.strip().lower()
+            if line.startswith("connected:"):
                 return line.split(":", 1)[-1].strip() == "yes"
         return False
 

@@ -65,6 +65,22 @@ Channel: 3
         self.assertEqual(pair_mock.call_count, 1)
         self.assertEqual(trust_mock.call_count, 1)
 
+    def test_ensure_connected_uses_reported_device_state(self) -> None:
+        tools = LinuxCommandTools()
+        with patch.object(tools, "_has_bluetoothctl", return_value=True), patch.object(
+            tools, "_bluetoothctl_is_connected", side_effect=[False, True]
+        ), patch.object(tools, "_run_bluetoothctl") as run_mock:
+            tools.ensure_connected("AA")
+        run_mock.assert_called_once_with(["connect", "AA"], timeout=20)
+
+    def test_ensure_connected_raises_when_link_stays_disconnected(self) -> None:
+        tools = LinuxCommandTools()
+        with patch.object(tools, "_has_bluetoothctl", return_value=True), patch.object(
+            tools, "_bluetoothctl_is_connected", side_effect=[False, False]
+        ), patch.object(tools, "_run_bluetoothctl"):
+            with self.assertRaisesRegex(RuntimeError, "did not become connected"):
+                tools.ensure_connected("AA")
+
 
 if __name__ == "__main__":
     unittest.main()

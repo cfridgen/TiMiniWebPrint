@@ -47,3 +47,4 @@ class _LinuxClassicAdapter(_ClassicBluetoothAdapter):
 
     def ensure_paired(self, address: str, pairing_hint: Optional[bool] = None) -> None:
         self._commands.ensure_paired(address)
+        self._commands.ensure_connected(address)
