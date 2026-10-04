@@ -101,6 +101,8 @@
   "connection.connected": "Connected: {name}",
   "connection.autoconnect": "Auto-connecting first detected printer...",
   "connection.autoconnectFailed": "Printer detected. Auto-connect failed, please click Connect.",
+  "connection.available": "Printer available: {name}",
+  "connection.detectedNotConnected": "Printer detected, connection not established.",
   "mode.text": "Text",
   "mode.file": "Image / PDF",
   "file.dropHint": "Drop JPG, PNG, SVG or PDF here, or click to select",

@@ -101,6 +101,8 @@
   "connection.connected": "Connecté: {name}",
   "connection.autoconnect": "Connexion automatique de la première imprimante détectée...",
   "connection.autoconnectFailed": "Imprimante détectée. La connexion automatique a échoué, veuillez cliquer sur Connecter.",
+  "connection.available": "Imprimante disponible : {name}",
+  "connection.detectedNotConnected": "Imprimante détectée, connexion non établie.",
   "mode.text": "Texte",
   "mode.file": "Image / PDF",
   "file.dropHint": "Déposez un JPG, PNG, SVG ou PDF ici, ou cliquez pour sélectionner",

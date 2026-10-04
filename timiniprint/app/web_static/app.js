@@ -22,6 +22,7 @@ let clientDebugEntries = [];
 let debugPollTimer = null;
 let debugRenderedText = '';
 let debugUiEnabled = false;
+let printerStatusTimer = null;
 let buildInfoState = {
   version: '',
   buildId: '',
@@ -1044,29 +1045,12 @@ async function loadProfiles() {
       return;
     }
 
-    const active = data.active_printer;
-    if (active && active.target) {
-      connectedTarget = active.target;
-      connectedProfileKey = active.profile_key || selectedDeviceProfile();
-      upsertConnectedOption(
-        connectedTarget,
-        connectedProfileKey,
-        `${active.display_name || connectedTarget} (${connectedTarget}) ${active.transport_badge || ''} ${connectedBadge()}`.trim()
-      );
-      setConnectionState(t('connection.connected', { name: active.display_name || connectedTarget }), 'is-connected');
-      updateConnectButtonState();
-      log(t('log.usingActivePrinter', { name: active.display_name || connectedTarget }));
-      return;
-    }
-
+    // Scanning only discovers printers. It must not establish a persistent
+    // Bluetooth link because another running instance may share the adapter.
     connectedTarget = null;
     connectedProfileKey = selectedDeviceProfile();
     updateConnectButtonState();
-    setConnectionState(t('connection.autoconnect'), 'is-scanning');
-    await connectSelected(true);
-    if (!connectedTarget) {
-      setConnectionState(t('connection.autoconnectFailed'), 'is-error');
-    }
+    await refreshPrinterStatus(false);
   } catch (err) {
     log(t('log.scanFailed', { error: err }));
     setConnectionState(t('connection.scanFailed'), 'is-error');
@@ -1136,16 +1120,13 @@ async function connectSelected(autoConnect = false) {
       setConnectionState(t('printer.notConnected'), 'is-error');
       return;
     }
-    connectedTarget = target;
+    // /api/connect intentionally disconnects before responding. Keep the
+    // selected printer, but do not represent this as a retained connection.
+    connectedTarget = null;
     connectedProfileKey = data.profile_key || selectedDeviceProfile();
-    upsertConnectedOption(
-      connectedTarget,
-      connectedProfileKey,
-      `${data.display_name || target} (${connectedTarget}) ${data.transport_badge || ''} ${connectedBadge()}`.trim()
-    );
-    setConnectionState(t('connection.connected', { name: data.display_name || target }), 'is-connected');
+    setConnectionState(t('connection.available', { name: data.display_name || target }), 'is-connected');
     updateConnectButtonState();
-    log(t('log.connectedTo', { name: data.display_name || target }));
+    log(t('connection.available', { name: data.display_name || target }));
   } catch (err) {
     log(t('log.connectFailed', { error: err }));
     setConnectionState(t('printer.notConnected'), 'is-error');
@@ -1157,6 +1138,38 @@ async function connectSelected(autoConnect = false) {
 $('connectBtn').addEventListener('click', async () => {
   await connectSelected(false);
 });
+
+function applyPrinterStatus(status) {
+  const device = status && status.device;
+  const deviceName = device && (device.display_name || device.target);
+  if (status && status.state === 'available') {
+    setConnectionState(t('connection.available', { name: deviceName || t('device.unknown') }), 'is-connected');
+    return;
+  }
+  if (status && status.state === 'detected_not_connected') {
+    setConnectionState(t('connection.detectedNotConnected'), 'is-error');
+    return;
+  }
+  if (status && status.state === 'starting') {
+    setConnectionState(t('connection.scanning'), 'is-scanning');
+    return;
+  }
+  setConnectionState(t('connection.detectedNotConnected'), 'is-error');
+}
+
+async function refreshPrinterStatus(showErrors = false) {
+  try {
+    const res = await fetch('/api/printer-status');
+    const data = await parseJsonOrLog(res, 'Printer status failed');
+    if (!data || !res.ok) {
+      if (showErrors) log(t('log.scanFailed', { error: JSON.stringify(data) }));
+      return;
+    }
+    applyPrinterStatus(data);
+  } catch (err) {
+    if (showErrors) log(t('log.scanFailed', { error: err }));
+  }
+}
 
 $('previewBtn').addEventListener('click', async () => {
   await renderPreview(true);
@@ -1645,6 +1658,11 @@ async function init() {
   updateColumnsLabel();
   await loadFonts();
   await loadProfiles();
+  await refreshPrinterStatus(false);
+  if (printerStatusTimer) clearInterval(printerStatusTimer);
+  printerStatusTimer = setInterval(() => {
+    refreshPrinterStatus(false).catch(() => {});
+  }, 15000);
   updateConnectButtonState();
   await renderPreview(false);
 }

@@ -7,6 +7,7 @@ import io
 import inspect
 import logging
 import os
+import random
 import shutil
 import tempfile
 import time
@@ -29,6 +30,11 @@ from ..rendering.converters.text import TextConverter
 from ..rendering.renderer import image_to_bw_pixels
 from ..transport.bluetooth import BleakBluetoothConnector, BluetoothDiscovery
 from . import cli as cli_app
+
+try:
+    import fcntl
+except ModuleNotFoundError:
+    fcntl = None
 
 try:
     from ..rendering.text_size_policy import resolve_text_size
@@ -157,6 +163,22 @@ _DEBUG_FEATURE_ENABLED = True
 _NOISY_HTTP_PATHS = {"/api/debug/logs"}
 _APP_STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 _APP_BUILD_ID = (os.environ.get("TIMINIPRINT_BUILD") or os.environ.get("TIMINIPRINT_IMAGE_TAG") or "").strip()
+_PRINTER_MONITOR_LOCK_PATH = Path(
+    os.environ.get(
+        "TIMINIPRINT_MONITOR_LOCK",
+        "/run/dbus/timiniprint-monitor.lock" if Path("/run/dbus").is_dir() else "/tmp/timiniprint-monitor.lock",
+    )
+)
+_PRINTER_MONITOR_MIN_INTERVAL_S = 60
+_PRINTER_MONITOR_MAX_INTERVAL_S = 90
+_printer_monitor_task: asyncio.Task[None] | None = None
+_printer_status: dict[str, object] = {
+    "state": "starting",
+    "device": None,
+    "last_checked_at": None,
+    "last_probe_at": None,
+    "last_error": None,
+}
 
 
 def _ensure_log_dir() -> None:
@@ -258,6 +280,139 @@ def _ble_runtime_diagnostics() -> dict[str, object]:
         "candidate_socket_exists": {path: os.path.exists(path) for path in candidate_sockets},
         "bluetoothctl_found": bool(shutil.which("bluetoothctl")),
     }
+
+
+def _monitor_lock() -> tuple[object | None, bool]:
+    """Return a non-blocking host-shared lock for Bluetooth monitor activity."""
+    try:
+        _PRINTER_MONITOR_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        handle = _PRINTER_MONITOR_LOCK_PATH.open("a+")
+        if fcntl is None:
+            return handle, True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return None, False
+    return handle, True
+
+
+def _release_monitor_lock(handle: object | None) -> None:
+    if handle is None:
+        return
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+def _device_status_payload(device) -> dict[str, str]:
+    return {
+        "target": device.address,
+        "display_name": device.display_name,
+        "profile_key": device.profile_key,
+        "transport_badge": device.transport_badge,
+    }
+
+
+async def _refresh_printer_status(*, probe_capabilities: bool) -> None:
+    """Update availability without retaining a Bluetooth connection."""
+    global _printer_status
+    lock_handle, lock_acquired = _monitor_lock()
+    if not lock_acquired:
+        _debug_event("monitor", "Bluetooth monitor skipped; another instance is probing")
+        return
+
+    try:
+        catalog = PrinterCatalog.load()
+        result = await BluetoothDiscovery(catalog).scan_report(include_classic=True, include_ble=True)
+        checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        if not result.devices:
+            _printer_status = {
+                **_printer_status,
+                "state": "detected_not_connected" if _printer_status["device"] else "unavailable",
+                "last_checked_at": checked_at,
+                "last_error": "; ".join(str(failure.error) for failure in result.failures) or None,
+            }
+            _debug_event("monitor", "Printer availability check found no supported printer")
+            return
+
+        device = result.devices[0]
+        device_payload = _device_status_payload(device)
+        next_status: dict[str, object] = {
+            **_printer_status,
+            "state": "available",
+            "device": device_payload,
+            "last_checked_at": checked_at,
+            "last_error": None,
+        }
+        if probe_capabilities:
+            next_status["last_probe_at"] = checked_at
+            try:
+                reporter = reporting.Reporter([reporting.StderrSink(levels={"debug", "warning", "error"})])
+                connection = await BleakBluetoothConnector(reporter=reporter).connect(device)
+                try:
+                    # Connecting resolves the device's offered services; do not retain this link.
+                    await connection.disconnect()
+                except Exception as exc:
+                    _debug_event("warning", "Printer capability probe disconnect failed", error=str(exc))
+            except Exception as exc:
+                next_status["state"] = "detected_not_connected"
+                next_status["last_error"] = str(exc)
+                _debug_event(
+                    "warning",
+                    "Printer detected but capability probe could not connect",
+                    target=device.address,
+                    error=str(exc),
+                )
+            else:
+                _debug_event("monitor", "Printer capability probe completed and disconnected", target=device.address)
+
+        _printer_status = next_status
+        _debug_event(
+            "monitor",
+            "Printer availability updated",
+            state=_printer_status["state"],
+            target=device.address,
+            probed=probe_capabilities,
+        )
+    except Exception as exc:
+        _printer_status = {
+            **_printer_status,
+            "state": "detected_not_connected" if _printer_status["device"] else "unavailable",
+            "last_checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "last_error": str(exc),
+        }
+        _debug_event("error", "Printer availability check failed", error=str(exc))
+        logger.exception("Printer availability check failed", exc_info=exc)
+    finally:
+        _release_monitor_lock(lock_handle)
+
+
+async def _printer_monitor_loop() -> None:
+    await _refresh_printer_status(probe_capabilities=True)
+    while True:
+        await asyncio.sleep(random.uniform(_PRINTER_MONITOR_MIN_INTERVAL_S, _PRINTER_MONITOR_MAX_INTERVAL_S))
+        await _refresh_printer_status(probe_capabilities=False)
+
+
+@app.on_event("startup")
+async def start_printer_monitor() -> None:
+    global _printer_monitor_task
+    if _printer_monitor_task is None or _printer_monitor_task.done():
+        _printer_monitor_task = asyncio.create_task(_printer_monitor_loop(), name="printer-availability-monitor")
+
+
+@app.on_event("shutdown")
+async def stop_printer_monitor() -> None:
+    global _printer_monitor_task
+    if _printer_monitor_task is None:
+        return
+    _printer_monitor_task.cancel()
+    try:
+        await _printer_monitor_task
+    except asyncio.CancelledError:
+        pass
+    _printer_monitor_task = None
 
 
 @app.middleware("http")
@@ -1035,6 +1190,12 @@ def build_info() -> dict[str, object]:
     }
 
 
+@app.get("/api/printer-status")
+def printer_status() -> dict[str, object]:
+    """Expose the shared passive monitor result to every browser session."""
+    return dict(_printer_status)
+
+
 @app.get("/api/debug/logs")
 def debug_logs(limit: int = Query(default=120, ge=1, le=300)) -> dict[str, object]:
     if not _DEBUG_FEATURE_ENABLED:
@@ -1355,4 +1516,3 @@ async def print_label(request: PrintRequest) -> dict[str, str]:
         raise HTTPException(status_code=500, detail=f"Print failed with exit code {code}")
     _debug_event("print", "Print job sent")
     return {"message": "Print job sent."}
-
